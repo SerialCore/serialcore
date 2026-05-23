@@ -1,0 +1,65 @@
+# Compiled object files
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+*.out
+
+# CUDA compiled files
+*.cubin
+*.ptx
+*.fatbin
+
+# Build directories
+build/
+Build/
+dist/
+bin/
+
+# Debugging
+*.dSYM/
+*.su
+*.gch
+*.pch
+vgcore.*
+core
+core.*
+*.stackdump
+
+# CUDA specific
+*.cubin
+*.fatbin
+*.ptx
+*.i
+*.ii
+
+# Documentation
+docs/html/
+docs/latex/
+docs/*.pdf
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*.swo
+.gdb_history
+
+# OS specific
+.DS_Store
+Thumbs.db
+.directory
+._.DS_Store
+
+# Python bytecode (if any Python build scripts)
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Logs
+*.log

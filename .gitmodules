@@ -1,0 +1,30 @@
+[submodule "reference/darknet"]
+	path = reference/darknet
+	url = https://github.com/pjreddie/darknet.git
+[submodule "reference/Deep-Neural-Network-in-C"]
+	path = reference/Deep-Neural-Network-in-C
+	url = https://github.com/mounirouadi/Deep-Neural-Network-in-C.git
+[submodule "reference/Encoder-Transformer-From-Scratch-in-C"]
+	path = reference/Encoder-Transformer-From-Scratch-in-C
+	url = https://github.com/KartikeyBartwal/Encoder-Transformer-From-Scratch-in-C.git
+[submodule "reference/genann"]
+	path = reference/genann
+	url = https://github.com/codeplea/genann.git
+[submodule "reference/GPT-2-in-C"]
+	path = reference/GPT-2-in-C
+	url = https://github.com/angry-kratos/GPT-2-in-C.git
+[submodule "reference/llama2.c"]
+	path = reference/llama2.c
+	url = https://github.com/karpathy/llama2.c.git
+[submodule "reference/llama.cpp"]
+	path = reference/llama.cpp
+	url = https://github.com/ggml-org/llama.cpp.git
+[submodule "reference/llm.c"]
+	path = reference/llm.c
+	url = https://github.com/karpathy/llm.c.git
+[submodule "reference/microgpt-c"]
+	path = reference/microgpt-c
+	url = https://github.com/vixhal-baraiya/microgpt-c.git
+[submodule "reference/TRiP"]
+	path = reference/TRiP
+	url = https://github.com/carlovalenti/TRiP.git
