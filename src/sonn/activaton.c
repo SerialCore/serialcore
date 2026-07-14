@@ -4,12 +4,12 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-#include <serialcore/scnn/activation.h>
+#include <serialcore/sonn/activaton.h>
 
 #include <stdio.h>
 #include <string.h>
 
-float activate(float x, ACTIVATION_T a)
+float activaton_func(float x, activaton_t a)
 {
     switch (a) {
         case Sigmoid:
@@ -36,7 +36,7 @@ float activate(float x, ACTIVATION_T a)
     }
 }
 
-float gradient(float x, ACTIVATION_T a)
+float gradient_func(float x, activaton_t a)
 {
     switch (a) {
         case Sigmoid:
@@ -63,7 +63,7 @@ float gradient(float x, ACTIVATION_T a)
     }
 }
 
-char *activation_name(ACTIVATION_T a)
+char *activaton_name(activaton_t a)
 {
     switch (a) {
         case Sigmoid:
@@ -90,7 +90,7 @@ char *activation_name(ACTIVATION_T a)
     }
 }
 
-ACTIVATION_T activation_type(char *s)
+activaton_t activaton_type(char *s)
 {
     if (strcmp(s, "Sigmoid") == 0) return Sigmoid;
     if (strcmp(s, "Tanh") == 0) return Tanh;

@@ -19,7 +19,7 @@ BIN_DIR = $(BUILD_DIR)bin/
 
 INC_DIR = include/
 SRC_DIR = src/
-SCNN_DIR = $(SRC_DIR)scnn/
+SONN_DIR = $(SRC_DIR)sonn/
 
 EXECUTABLE = $(BIN_DIR)serialcore
 
@@ -63,7 +63,7 @@ ifeq ($(CUDNN),1)
     LDFLAGS += -lcudnn
 endif
 
-C_SOURCES = $(wildcard $(SRC_DIR)*.c $(SCNN_DIR)*.c)
+C_SOURCES = $(wildcard $(SRC_DIR)*.c $(SONN_DIR)*.c)
 
 OBJECTS = $(patsubst %.c,$(OBJ_DIR)%.o,$(C_SOURCES)) \
           $(patsubst %.cc,$(OBJ_DIR)%.o,$(CPP_SOURCES)) \
