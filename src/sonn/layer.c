@@ -142,12 +142,12 @@ int layer_ffnn_forward(network_t *net, const float *inputs, float *outputs)
             int prev_start = g_layers[l-1].start_id;
             int prev_cnt = g_layers[l-1].count;
 
-            int *row = nnpool_adjacency_row(p, nid);
-            if (!row) continue;
+            edge_t *erow = nnpool_edge_row(p, nid);
+            if (!erow) continue;
 
             for (int s = 0; s < p->max_degree; s++) {
-                int from = row[s];
-                if (from < 0) continue;
+                if (!erow[s].active) continue;
+                int from = erow[s].to;
 
                 /* Only consider neurons from previous layer */
                 if (from >= prev_start && from < prev_start + prev_cnt) {
@@ -210,12 +210,12 @@ int layer_ffnn_train_step(network_t *net, const float *inputs, float target, flo
         neuron_t *n = nnpool_get_neuron(p, nid);
         if (!n) continue;
 
-        int *row = nnpool_adjacency_row(p, nid);
-        if (!row) continue;
+        edge_t *erow = nnpool_edge_row(p, nid);
+        if (!erow) continue;
 
         for (int s = 0; s < p->max_degree; s++) {
-            int from = row[s];
-            if (from < 0) continue;
+            if (!erow[s].active) continue;
+            int from = erow[s].to;
             if (from < prev_start || from >= prev_start + prev_cnt) continue;
 
             int slot = nnpool_find_edge_slot(p, from, nid);

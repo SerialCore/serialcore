@@ -36,11 +36,11 @@ typedef struct neuron {
 } neuron_t;
 
 typedef struct edge {
-    int     from;
-    int     to;
-    int     active;
-    float   strength;
-    float   age;
+    int         from;
+    int         to;
+    int         active;
+    float       strength;
+    float       age;
 } edge_t;
 
 /* Activate / initialize a pre-created neuron slot.

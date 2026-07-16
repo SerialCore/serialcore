@@ -48,15 +48,13 @@ nnpool_t* nnpool_create(int max_neurons, int input_dim)
     /* Unified params block: bias at [0], weights at [1 .. input_dim] for each neuron */
     p->params = (float*)calloc((size_t)max_neurons * (input_dim + 1), sizeof(float));
     p->edges = (edge_t*)calloc(p->max_edges, sizeof(edge_t));
-    p->adj = (int*)calloc(p->max_edges, sizeof(int));
     p->degrees = (int*)calloc(max_neurons, sizeof(int));
 
-    /* The adjacency list must be initialized to -1 to mean "no connection".
-     * 0 is a valid slot index; without this initialization, get_neighbors would return wrong results.
+    /* edges are zeroed by calloc:
+     * .active == 0 means empty slot.
+     * .to will be set only when .active is set.
+     * 0 is a valid neuron id, so always test .active, never rely on .to value alone.
      */
-    for (int i = 0; i < max_neurons * p->max_degree; i++) {
-        p->adj[i] = -1;
-    }
 
     return p;
 }
@@ -67,7 +65,6 @@ void nnpool_destroy(nnpool_t *p)
     free(p->neurons);
     free(p->params);
     free(p->edges);
-    free(p->adj);
     free(p->degrees);
     free(p);
 }
@@ -105,11 +102,11 @@ int nnpool_find_edge_slot(nnpool_t *p, int from, int to)
     if (!p || from < 0 || to < 0) return -1;
     if (from >= p->max_neurons || to >= p->max_neurons) return -1;
 
-    int *row = nnpool_adjacency_row(p, from);
+    edge_t *row = nnpool_edge_row(p, from);
     if (!row) return -1;
 
     for (int s = 0; s < p->max_degree; s++) {
-        if (row[s] == to) return s;
+        if (row[s].active && row[s].to == to) return s;
     }
     return -1;
 }

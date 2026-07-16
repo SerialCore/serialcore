@@ -23,7 +23,7 @@
  *       - Unit size: one neuron slot occupies (input_dim + 1) floats:
  *           params[0] = bias, params[1 .. input_dim] = weights
  *         (input_dim = number of weights)
- *   - Provide direct access to raw storage (neurons, params, edges, adj, degrees).
+ *   - Provide direct access to raw storage (neurons, params, edges, degrees).
  *   - Provide basic memory access and query operations.
  *
  * Pool **does not contain** any neuron operations (add/remove neurons).
@@ -36,8 +36,7 @@ typedef struct nnpool {
     /* Raw storage (fully pre-allocated at creation) */
     neuron_t *neurons;              /* [max_neurons] */
     float    *params;               /* [max_neurons * (input_dim + 1)] — bias at [0], weights [1..] for each neuron */
-    edge_t   *edges;                /* [max_edges] */
-    int      *adj;                  /* [max_neurons][max_degree] — adjacency list: neighbor IDs for each neuron */
+    edge_t   *edges;                /* [max_neurons * max_degree] — edge attributes + connectivity (use .to when .active) */
     int      *degrees;              /* current "degree" = number of neighbors this neuron currently has (0..max_degree) */
 
     /* Capacity information */
@@ -78,13 +77,17 @@ static inline neuron_t* nnpool_get_neuron(nnpool_t *p, int id)
 static inline float* nnpool_get_params(nnpool_t *p, int id)
 {
     if (!p || id < 0 || id >= p->max_neurons) return NULL;
-    return p->params + (size_t)id * (p->input_dim + 1);
+    return p->params + id * (p->input_dim + 1);
 }
 
-static inline int* nnpool_adjacency_row(nnpool_t *p, int id)
+/* Returns a pointer to the row of edge_t slots for a neuron.
+ * Connectivity is stored in e->to when e->active != 0.
+ * Use this instead of a separate adjacency list.
+ */
+static inline edge_t* nnpool_edge_row(nnpool_t *p, int id)
 {
     if (!p || id < 0 || id >= p->max_neurons) return NULL;
-    return p->adj + id * p->max_degree;
+    return p->edges + id * p->max_degree;
 }
 
 #endif

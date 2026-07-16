@@ -60,10 +60,11 @@ int network_add_neuron(network_t *net, activaton_t type) {
     neuron_t *n = nnpool_get_neuron(net->pool, slot);
     float *params = nnpool_get_params(net->pool, slot);
 
-    int *row = nnpool_adjacency_row(net->pool, slot);
-    if (row) {
+    edge_t *erow = nnpool_edge_row(net->pool, slot);
+    if (erow) {
         for (int s = 0; s < net->pool->max_degree; s++) {
-            row[s] = -1;
+            erow[s].active = 0;
+            erow[s].to = -1;
         }
     }
     net->pool->degrees[slot] = 0;
@@ -88,11 +89,11 @@ void network_remove_neuron(network_t *net, int id) {
 
     /* Remove all incident edges (semantic cleanup) */
     int md = net->pool->max_degree;
-    int *row = nnpool_adjacency_row(net->pool, id);
-    if (row) {
+    edge_t *erow = nnpool_edge_row(net->pool, id);
+    if (erow) {
         for (int s = 0; s < md; s++) {
-            int to = row[s];
-            if (to >= 0) {
+            if (erow[s].active) {
+                int to = erow[s].to;
                 network_remove_edge(net, id, to);
             }
         }
@@ -102,11 +103,12 @@ void network_remove_neuron(network_t *net, int id) {
     for (int i = 0; i < net->pool->max_neurons; i++) {
         neuron_t *other = nnpool_get_neuron(net->pool, i);
         if (!other || !other->active) continue;
-        int *orow = nnpool_adjacency_row(net->pool, i);
+        edge_t *orow = nnpool_edge_row(net->pool, i);
         if (!orow) continue;
         for (int s = 0; s < md; s++) {
-            if (orow[s] == id) {
-                orow[s] = -1;
+            if (orow[s].active && orow[s].to == id) {
+                orow[s].active = 0;
+                orow[s].to = -1;
                 net->pool->degrees[i]--;
             }
         }
@@ -139,11 +141,11 @@ int network_add_edge(network_t *net, int from, int to, float strength) {
 
     if (net->pool->degrees[from] >= md) return -1;
 
-    /* Find free slot in adjacency row */
-    int *row = nnpool_adjacency_row(net->pool, from);
+    /* Find free slot in this neuron's edge row */
+    edge_t *row = nnpool_edge_row(net->pool, from);
     slot = -1;
     for (int s = 0; s < md; s++) {
-        if (row[s] == -1) {
+        if (!row[s].active) {
             slot = s;
             break;
         }
@@ -151,7 +153,6 @@ int network_add_edge(network_t *net, int from, int to, float strength) {
     if (slot < 0) return -1;
 
     int eidx = from * md + slot;
-    row[slot] = to;
     net->pool->degrees[from]++;
 
     edge_t *e = &net->pool->edges[eidx];
@@ -164,10 +165,9 @@ int network_add_edge(network_t *net, int from, int to, float strength) {
     /* Optional reverse edge (GNG style) */
     int rslot = nnpool_find_edge_slot(net->pool, to, from);
     if (rslot < 0 && net->pool->degrees[to] < md) {
-        int *rrow = nnpool_adjacency_row(net->pool, to);
+        edge_t *rrow = nnpool_edge_row(net->pool, to);
         for (int s = 0; s < md; s++) {
-            if (rrow[s] == -1) {
-                rrow[s] = from;
+            if (!rrow[s].active) {
                 net->pool->degrees[to]++;
                 int re = to * md + s;
                 edge_t *re_e = &net->pool->edges[re];
@@ -190,16 +190,18 @@ void network_remove_edge(network_t *net, int from, int to) {
     int md = net->pool->max_degree;
     int slot = nnpool_find_edge_slot(net->pool, from, to);
     if (slot >= 0) {
-        int *row = nnpool_adjacency_row(net->pool, from);
-        row[slot] = -1;
+        edge_t *row = nnpool_edge_row(net->pool, from);
+        row[slot].active = 0;
+        row[slot].to = -1;
         net->pool->degrees[from]--;
         net->pool->edges[from * md + slot].active = 0;
     }
 
     int rslot = nnpool_find_edge_slot(net->pool, to, from);
     if (rslot >= 0) {
-        int *rrow = nnpool_adjacency_row(net->pool, to);
-        rrow[rslot] = -1;
+        edge_t *rrow = nnpool_edge_row(net->pool, to);
+        rrow[rslot].active = 0;
+        rrow[rslot].to = -1;
         net->pool->degrees[to]--;
         net->pool->edges[to * md + rslot].active = 0;
     }
@@ -211,12 +213,12 @@ int network_get_neighbors(network_t *net, int id, int *out, int max_out) {
     if (!n || !n->active) return 0;
 
     int md = net->pool->max_degree;
-    int *row = nnpool_adjacency_row(net->pool, id);
-    if (!row) return 0;
+    edge_t *erow = nnpool_edge_row(net->pool, id);
+    if (!erow) return 0;
 
     int count = 0;
     for (int s = 0; s < md && count < max_out; s++) {
-        if (row[s] >= 0) out[count++] = row[s];
+        if (erow[s].active) out[count++] = erow[s].to;
     }
     return count;
 }
