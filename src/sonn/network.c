@@ -115,7 +115,7 @@ void network_remove_neuron(network_t *net, int id) {
     }
 
     /* Release the raw slot back to the pool (pure memory operation) */
-    nnpool_release_slot(net->pool);
+    nnpool_release_slot(net->pool, id);
     net->current_neurons--;
 }
 

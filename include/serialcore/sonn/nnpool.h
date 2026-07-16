@@ -16,13 +16,12 @@
  *
  * Responsibilities (strict):
  *   - At creation time, "fill" the entire memory pool (pre-allocate max_neurons units + edge storage).
+ *   - Maintain free_list + free_count for O(1) slot reuse (as recommended in IMPLEMENTATION_GUIDE).
  *   - Only maintain capacity information:
  *       - Total capacity (max_neurons)
  *       - Used capacity (used_neurons)
- *       - Available capacity (computable)
- *       - Unit size: one neuron slot occupies (input_dim + 1) floats:
- *           params[0] = bias, params[1 .. input_dim] = weights
- *         (input_dim = number of weights)
+ *       - Available capacity via free_list
+ *       - Unit size: one neuron slot occupies (input_dim + 1) floats
  *   - Provide direct access to raw storage (neurons, params, edges, degrees).
  *   - Provide basic memory access and query operations.
  *
@@ -45,20 +44,24 @@ typedef struct nnpool {
     int      input_dim;             /* number of weights per neuron (total params per neuron = input_dim + 1, bias at 0) */
     int      max_degree;            /* maximum neighbors per neuron (fan-out limit) */
     int      max_edges;             /* max_edges = max_neurons * max_degree */
+
+    /* Free list for O(1) slot reuse (stack of available indices) */
+    int     *free_list;
+    int      free_count;
 } nnpool_t;
 
 /* Lifecycle */
 nnpool_t* nnpool_create(int max_neurons, int input_dim);
 void nnpool_destroy(nnpool_t *p);
 
-/* Claim a raw slot from available capacity.
+/* Claim a raw slot from available capacity using free list.
  * Returns [0, max_neurons), or -1.
  * This is only memory allocation; the Network layer is responsible for interpreting it as a "neuron".
  */
 int nnpool_acquire_slot(nnpool_t *p);
 
-/* Return a raw slot back to the pool. */
-void nnpool_release_slot(nnpool_t *p);
+/* Return a raw slot back to the pool (push onto free list). */
+void nnpool_release_slot(nnpool_t *p, int id);
 
 /* Find a edge slot between from and to */
 int nnpool_find_edge_slot(nnpool_t *p, int from, int to);

@@ -9,7 +9,8 @@
  *
  * Strict constraints:
  *   - At creation time, "fill" the entire memory pool (one-time full allocation).
- *   - Only maintain capacity information (total capacity, used capacity).
+ *   - Use free_list for O(1) slot acquire/release (no scans).
+ *   - Maintain capacity (used_neurons, free_count).
  *   - Provide direct access to raw storage and the most basic storage queries.
  *
  * Pool **does not contain**:
@@ -50,6 +51,24 @@ nnpool_t* nnpool_create(int max_neurons, int input_dim)
     p->edges = (edge_t*)calloc(p->max_edges, sizeof(edge_t));
     p->degrees = (int*)calloc(max_neurons, sizeof(int));
 
+    /* Free list for fast slot reuse (LIFO) */
+    p->free_list = (int*)malloc((size_t)max_neurons * sizeof(int));
+    if (!p->free_list) {
+        free(p->degrees);
+        free(p->edges);
+        free(p->params);
+        free(p->neurons);
+        free(p);
+        return NULL;
+    }
+    /* Initialize free list in reverse so that acquire returns low ids first (0,1,2,...)
+     * (matches previous scan-from-0 behavior for initial contiguous allocation)
+     */
+    for (int i = 0; i < max_neurons; i++) {
+        p->free_list[i] = max_neurons - 1 - i;
+    }
+    p->free_count = max_neurons;
+
     /* edges are zeroed by calloc:
      * .active == 0 means empty slot.
      * .to will be set only when .active is set.
@@ -62,6 +81,7 @@ nnpool_t* nnpool_create(int max_neurons, int input_dim)
 void nnpool_destroy(nnpool_t *p)
 {
     if (!p) return;
+    free(p->free_list);
     free(p->neurons);
     free(p->params);
     free(p->edges);
@@ -71,27 +91,21 @@ void nnpool_destroy(nnpool_t *p)
 
 int nnpool_acquire_slot(nnpool_t *p)
 {
-    if (!p) return -1;
-    if (p->used_neurons >= p->max_neurons) return -1;
+    if (!p || p->free_count <= 0) return -1;
 
-    /* searching for the first idle neuron to be used in network */
-    for (int id = 0; id < p->max_neurons; id++) {
-        if (!p->neurons[id].active) {
-            p->used_neurons++;            
-            return id;
-        }
-    }
-
-    /* there are no idle neurons */
-    return -1;
+    /* Pop from free list (LIFO reuse) */
+    int slot = p->free_list[--p->free_count];
+    p->used_neurons++;
+    return slot;
 }
 
-void nnpool_release_slot(nnpool_t *p)
+void nnpool_release_slot(nnpool_t *p, int id)
 {
-    if (!p) return;
-    if (p->used_neurons >= p->max_neurons) return;
+    if (!p || id < 0 || id >= p->max_neurons) return;
+    if (p->free_count >= p->max_neurons) return;
 
-    /* just decrease the pool usage, no neuron operation here */
+    /* Push back to free list for reuse */
+    p->free_list[p->free_count++] = id;
     if (p->used_neurons > 0) {
         p->used_neurons--;
     }
