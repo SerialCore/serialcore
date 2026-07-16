@@ -58,7 +58,7 @@ int network_add_neuron(network_t *net, activaton_t type) {
     if (slot < 0) return -1;
 
     neuron_t *n = nnpool_get_neuron(net->pool, slot);
-    float *w = nnpool_get_weights(net->pool, slot);
+    float *params = nnpool_get_params(net->pool, slot);
 
     int *row = nnpool_adjacency_row(net->pool, slot);
     if (row) {
@@ -70,7 +70,7 @@ int network_add_neuron(network_t *net, activaton_t type) {
 
     /* Activate the neuron (ID was already assigned at Pool creation time) */
     if (n) {
-        neuron_activate(n, type, w, net->pool->input_dim);
+        neuron_activate(n, type, params, net->pool->input_dim);
     }
 
     net->current_neurons++;
@@ -113,7 +113,7 @@ void network_remove_neuron(network_t *net, int id) {
     }
 
     /* Release the raw slot back to the pool (pure memory operation) */
-    nnpool_release_slot(net->pool, id);
+    nnpool_release_slot(net->pool);
     net->current_neurons--;
 }
 

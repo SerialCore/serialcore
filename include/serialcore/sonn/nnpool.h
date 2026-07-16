@@ -9,8 +9,7 @@
 
 #include <serialcore/sonn/neuron.h>
 
-#include <stddef.h>
-#include <stdint.h>
+#include <stdlib.h>
 
 /*
  * SONN Pool — Pure memory pool.
@@ -21,8 +20,10 @@
  *       - Total capacity (max_neurons)
  *       - Used capacity (used_neurons)
  *       - Available capacity (computable)
- *       - Unit size: one neuron slot occupies input_dim floats (weights)
- *   - Provide direct access to raw storage (neurons, weight_block, edges, adj, degrees).
+ *       - Unit size: one neuron slot occupies (input_dim + 1) floats:
+ *           params[0] = bias, params[1 .. input_dim] = weights
+ *         (input_dim = number of weights)
+ *   - Provide direct access to raw storage (neurons, params, edges, adj, degrees).
  *   - Provide basic memory access and query operations.
  *
  * Pool **does not contain** any neuron operations (add/remove neurons).
@@ -34,8 +35,7 @@
 typedef struct nnpool {
     /* Raw storage (fully pre-allocated at creation) */
     neuron_t *neurons;              /* [max_neurons] */
-    float    *weights;              /* [max_neurons * input_dim] — weights for all neurons */
-    float    *biases;               /* [max_neurons] — scalar bias (offset) for each neuron */
+    float    *params;               /* [max_neurons * (input_dim + 1)] — bias at [0], weights [1..] for each neuron */
     edge_t   *edges;                /* [max_edges] */
     int      *adj;                  /* [max_neurons][max_degree] — adjacency list: neighbor IDs for each neuron */
     int      *degrees;              /* current "degree" = number of neighbors this neuron currently has (0..max_degree) */
@@ -43,22 +43,14 @@ typedef struct nnpool {
     /* Capacity information */
     int      max_neurons;           /* total capacity */
     int      used_neurons;          /* number of claimed units */
-    int      input_dim;             /* size of each unit (number of weights) */
+    int      input_dim;             /* number of weights per neuron (total params per neuron = input_dim + 1, bias at 0) */
     int      max_degree;            /* maximum neighbors per neuron (fan-out limit) */
-    int      max_edges;
-
-    /* Slot reuse support (free list for released slots) */
-    int      allocated;     /* high-water mark: next new slot to consider (0..max) */
-    int     *free_slots;    /* stack of reusable slot ids */
-    int      free_count;
+    int      max_edges;             /* max_edges = max_neurons * max_degree */
 } nnpool_t;
 
 /* Lifecycle */
 nnpool_t* nnpool_create(int max_neurons, int input_dim);
 void nnpool_destroy(nnpool_t *p);
-
-/* Low-level storage query */
-int nnpool_find_edge_slot(nnpool_t *p, int from, int to);
 
 /* Claim a raw slot from available capacity.
  * Returns [0, max_neurons), or -1.
@@ -67,7 +59,10 @@ int nnpool_find_edge_slot(nnpool_t *p, int from, int to);
 int nnpool_acquire_slot(nnpool_t *p);
 
 /* Return a raw slot back to the pool. */
-void nnpool_release_slot(nnpool_t *p, int id);
+void nnpool_release_slot(nnpool_t *p);
+
+/* Find a edge slot between from and to */
+int nnpool_find_edge_slot(nnpool_t *p, int from, int to);
 
 /* Basic memory access / query (no neuron semantics) */
 static inline neuron_t* nnpool_get_neuron(nnpool_t *p, int id)
@@ -76,16 +71,20 @@ static inline neuron_t* nnpool_get_neuron(nnpool_t *p, int id)
     return &p->neurons[id];
 }
 
-static inline float* nnpool_get_weights(nnpool_t *p, int id)
+/* Returns pointer to the full parameter block for a neuron:
+ *   params[0]           = bias
+ *   params[1 .. input_dim] = weights
+ */
+static inline float* nnpool_get_params(nnpool_t *p, int id)
 {
     if (!p || id < 0 || id >= p->max_neurons) return NULL;
-    return p->weights + (size_t)id * p->input_dim;
+    return p->params + (size_t)id * (p->input_dim + 1);
 }
 
 static inline int* nnpool_adjacency_row(nnpool_t *p, int id)
 {
     if (!p || id < 0 || id >= p->max_neurons) return NULL;
-    return p->adj + (size_t)id * p->max_degree;
+    return p->adj + id * p->max_degree;
 }
 
 #endif

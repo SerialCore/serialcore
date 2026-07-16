@@ -26,28 +26,34 @@
 #define SONN_INPUTDIM_1024  1024
 
 typedef struct neuron {
-    uint64_t id;
-    int active;
+    int         id;
+    int         active;
     activaton_t type;
-    float error;
-    float bias;
-    float *weights;   /* length == owning Network's input_dim */
+    float       error;
+    float       bias;
+    float       *weights;   /* points into pool->params[id*(input_dim+1) + 1] */
+    int         input_dim;
 } neuron_t;
 
 typedef struct edge {
-    int from;
-    int to;
-    int active;
-    float strength;
-    float age;
+    int     from;
+    int     to;
+    int     active;
+    float   strength;
+    float   age;
 } edge_t;
 
 /* Activate / initialize a pre-created neuron slot.
  * The ID has already been assigned by the Pool at creation time.
  * Network must not generate or assign neuron IDs.
- * This function only sets activation-related fields (type, active, weights, bias, etc).
+ *
+ * 'params' points to the neuron's unified parameter block in the pool:
+ *   params[0] = bias
+ *   params[1 .. input_dim] = weights
+ *
+ * This function initializes both the memory block and the neuron's fields.
  */
-void neuron_activate(neuron_t *n, activaton_t type, float *weights, int weight_count);
+void neuron_activate(neuron_t *n, activaton_t type, float *params, int input_dim);
 
 /* Mark a neuron as inactive and clear its pointer state.
  * Does not touch the weight memory itself.
