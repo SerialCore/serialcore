@@ -36,7 +36,7 @@ typedef struct network {
 } network_t;
 
 /* Lifecycle */
-network_t* network_create(int max_neurons, int input_dim, int seed);
+network_t* network_create(int max_neurons, int input_dim, int max_degree, int seed);
 void network_destroy(network_t *net);
 
 /* Neuron operations */

@@ -116,15 +116,15 @@ int layer_ffnn_forward(network_t *net, const float *inputs, float *outputs)
     nnpool_t *p = network_get_pool(net);
     if (!p) return -1;
 
-    /* Store activations for this forward pass in the neuron's `error` field
-     * (a convenient existing float; not used for its normal purpose here).
+    /* Store activations for this forward pass in the neuron's `activation` field.
+     * `error` is reserved for self-organizing use (e.g. GNG error accumulation).
      */
     int in_start = g_layers[0].start_id;
     int in_cnt = g_layers[0].count;
 
     for (int i = 0; i < in_cnt; i++) {
         neuron_t *n = nnpool_get_neuron(p, in_start + i);
-        if (n) n->error = inputs[i];
+        if (n) n->activation = inputs[i];
     }
 
     /* For each layer l >= 1 */
@@ -159,14 +159,14 @@ int layer_ffnn_forward(network_t *net, const float *inputs, float *outputs)
                     neuron_t *prev = nnpool_get_neuron(p, from);
                     if (prev) {
                         float w = n->weights[s];   /* use neuron.weights directly */
-                        sum += prev->error * w;
+                        sum += prev->activation * w;
                     }
                 }
             }
 
             sum += n->bias;
             float out = apply_act(sum, act);
-            n->error = out; /* store activation for next layer using error field */
+            n->activation = out; /* store activation for next layer */
         }
     }
 
@@ -176,7 +176,7 @@ int layer_ffnn_forward(network_t *net, const float *inputs, float *outputs)
 
     for (int i = 0; i < out_cnt; i++) {
         neuron_t *n = nnpool_get_neuron(p, out_start + i);
-        outputs[i] = n ? n->error : 0.0f;
+        outputs[i] = n ? n->activation : 0.0f;
     }
 
     return 0;
@@ -222,9 +222,9 @@ int layer_ffnn_train_step(network_t *net, const float *inputs, float target, flo
              */
             float w = n->weights[s];
 
-            /* Get previous activation (stored in error field) */
+            /* Get previous activation */
             neuron_t *prev = nnpool_get_neuron(p, from);
-            float prev_act = prev ? prev->error : 0.0f;
+            float prev_act = prev ? prev->activation : 0.0f;
 
             /* Delta rule: w += lr * error * prev_act */
             w += lr * error * prev_act;

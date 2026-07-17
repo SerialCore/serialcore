@@ -26,10 +26,8 @@ int main(void)
     int layer_sizes[4] = {2, 20, 20, 1};
     activaton_t layer_acts[4] = {GELU, GELU, GELU, GELU};
 
-    /* Create a network with a pool of 256 slots, each with 128-dim weight vectors.
-     * The actual fan-in is defined by the edges we add, not by pool input_dim.
-     */
-    network_t *net = network_create(256, 128, 42);
+    /* Create a network with a pool of 256 slots. */
+    network_t *net = network_create(256, 128, 64, 42);
     if (!net) {
         fprintf(stderr, "Failed to create network\n");
         return 1;

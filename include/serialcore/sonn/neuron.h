@@ -29,10 +29,11 @@ typedef struct neuron {
     int         id;
     int         active;
     activaton_t type;
-    float       error;
+    float       error;          /* for GNG-style error accumulation (keep free for self-organizing use) */
+    float       activation;     /* current activation value after applying activation function */
     float       bias;
-    float       *weights;   /* points into pool->params[id*(input_dim+1) + 1] */
-    int         input_dim;
+    float       *weights;       /* points into pool->params[id*(input_dim+1) + 1] */
+    int         input_dim;      /* size of the weights vector (kept as-is per request) */
 } neuron_t;
 
 typedef struct edge {

@@ -52,17 +52,18 @@ static void generate_random_parameter(nnpool_t *p)
     }
 }
 
-nnpool_t* nnpool_create(int max_neurons, int input_dim, int seed)
+nnpool_t* nnpool_create(int max_neurons, int input_dim, int max_degree, int seed)
 {
     if (max_neurons <= 0) return NULL;
+    if (max_degree <= 0) max_degree = SONN_DEFAULT_MAX_DEGREE;
 
     nnpool_t *p = (nnpool_t*)calloc(1, sizeof(nnpool_t));
     if (!p) return NULL;
 
     p->max_neurons = max_neurons;
     p->used_neurons = 0;
-    p->max_degree = SONN_DEGREE_MAX;
-    p->max_edges = max_neurons * SONN_DEGREE_MAX;
+    p->max_degree = max_degree;
+    p->max_edges = max_neurons * max_degree;
     p->input_dim = input_dim;
     p->seed = seed;
 
