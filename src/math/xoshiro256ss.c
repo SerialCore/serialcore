@@ -176,3 +176,22 @@ void jump_n(const uint64_t jump[POLY_WORDS]) {
 	f2x_jumppoly_n(jump, POLY_WORDS, poly);
 	jump_apply(poly);
 }
+
+/* === Seeding support (added for serialcore) ===
+ * Uses splitmix64 as recommended by the original xoshiro authors.
+ * This does not modify the core xoshiro256** generator logic.
+ */
+
+static uint64_t splitmix64(uint64_t x) {
+    uint64_t z = (x += 0x9e3779b97f4a7c15ULL);
+    z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
+    z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
+    return z ^ (z >> 31);
+}
+
+void xoshiro_seed(uint64_t seed) {
+    s[0] = splitmix64(seed);
+    s[1] = splitmix64(s[0]);
+    s[2] = splitmix64(s[1]);
+    s[3] = splitmix64(s[2]);
+}

@@ -15,10 +15,13 @@
  * The implementation lives in src/math/xoshiro256ss.c
  *
  * Seeding:
- *   The generator must be seeded before first use of next().
- *   The original code expects you to set the internal state.
- *   In practice, call next() / jump() a number of times derived from
- *   your seed value to get different starting points.
+ *   You MUST call xoshiro_seed() with a non-zero value before using next().
+ *   The original xoshiro256** authors recommend using splitmix64 to
+ *   initialize the internal state from a 64-bit seed.
+ *
+ *   Example:
+ *       xoshiro_seed(42);
+ *       uint64_t r = next();
  */
 
 uint64_t next(void);
@@ -27,5 +30,11 @@ void jump(void);
 void long_jump(void);
 void jump_ce(uint64_t c, uint32_t e);
 void jump_n(const uint64_t jump[4]);
+
+/* Seed the xoshiro256** generator.
+ * Call this once before any call to next(), jump(), etc.
+ * A seed of 0 will result in a bad (all-zero) internal state.
+ */
+void xoshiro_seed(uint64_t seed);
 
 #endif

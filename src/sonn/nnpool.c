@@ -24,38 +24,26 @@
 #include <stdlib.h>
 #include <stdint.h>
 
-/* Initialize the parameters using the original next() / jump() symbols
- * provided by xoshiross.h (implemented in xoshiro256ss.c).
- *
- * We "seed" by advancing the generator (mixing next() + jump()) a
- * number of steps derived from the pool seed and the neuron id.
+/* Initialize the parameters using the RNG.
+ * The generator must have been seeded via xoshiro_seed() before this is called.
  */
 static void generate_random_parameter(nnpool_t *p)
 {
     int max_neurons = p->max_neurons;
     int input_dim = p->input_dim;
-    int seed = p->seed;
+
+    /* Seed the RNG before generating any parameters */
+    xoshiro_seed((uint64_t)p->seed);
 
     for (int i = 0; i < max_neurons; i++) {
-        uint64_t nid = (uint64_t)p->neurons[i].id;
-
-        /* Mix using the original symbols */
-        uint32_t mix = (uint32_t)(seed ^ nid) & 0xFFu;
-        for (uint32_t k = 0; k < mix; k++) {
-            (void)next();
-        }
-        if (nid & 1) {
-            jump();   /* use original jump symbol */
-        }
-
         float *slot = p->params + i * (input_dim + 1);
 
-        /* bias - small */
+        /* bias - small random value in ~[-0.01, 0.01] */
         uint64_t r = next();
         float f = (r >> 11) * (1.0f / 9007199254740992.0f);
         slot[0] = (f * 2.0f - 1.0f) * 0.01f;
 
-        /* weights */
+        /* weights - random values in ~[-0.1, 0.1] */
         for (int w = 0; w < input_dim; w++) {
             r = next();
             f = (r >> 11) * (1.0f / 9007199254740992.0f);
