@@ -121,7 +121,7 @@ void network_remove_neuron(network_t *net, int id) {
     net->current_neurons--;
 }
 
-int network_add_edge(network_t *net, int from, int to, float strength) {
+int network_add_edge(network_t *net, int from, int to, float weight) {
     if (!net || !net->pool) return -1;
     if (from < 0 || to < 0 || from >= net->pool->max_neurons || to >= net->pool->max_neurons) return -1;
     if (from == to) return -1;
@@ -134,10 +134,17 @@ int network_add_edge(network_t *net, int from, int to, float strength) {
     int slot = nnpool_find_edge_slot(net->pool, from, to);
 
     if (slot >= 0) {
-        /* Update existing */
+        /* Update existing - update edge metadata and the weight in receiver's weights (Option A) */
         int eidx = from * md + slot;
-        net->pool->edges[eidx].strength = strength;
+        net->pool->edges[eidx].weight = 0.0f;   /* main weight no longer stored here (Option A) */
         net->pool->edges[eidx].age = 0;
+
+        /* Update weight in the 'to' (receiver) neuron's weights vector if reverse slot exists */
+        int rslot = nnpool_find_edge_slot(net->pool, to, from);
+        if (rslot >= 0) {
+            float *to_w = nnpool_get_params(net->pool, to);
+            if (to_w) to_w[rslot + 1] = weight;
+        }
         return eidx;
     }
 
@@ -160,11 +167,13 @@ int network_add_edge(network_t *net, int from, int to, float strength) {
     edge_t *e = &net->pool->edges[eidx];
     e->from = from;
     e->to = to;
-    e->strength = strength;
+    e->weight = 0.0f;   /* main weights now live in neuron->weights (Option A) */
     e->age = 0;
     e->active = 1;
 
-    /* Optional reverse edge (GNG style) */
+    /* Optional reverse edge (GNG style). The local slot 's' on the receiver (to) side
+     * is used as the index into the receiver's weights[] for this connection (Option A).
+     */
     int rslot = nnpool_find_edge_slot(net->pool, to, from);
     if (rslot < 0 && net->pool->degrees[to] < md) {
         edge_t *rrow = nnpool_edge_row(net->pool, to);
@@ -175,12 +184,22 @@ int network_add_edge(network_t *net, int from, int to, float strength) {
                 edge_t *re_e = &net->pool->edges[re];
                 re_e->from = to;
                 re_e->to = from;
-                re_e->strength = strength;
+                re_e->weight = 0.0f;
                 re_e->age = 0;
                 re_e->active = 1;
+
+                /* Place the connection weight into the receiver's weights at this local slot index */
+                float *to_w = nnpool_get_params(net->pool, to);
+                if (to_w) {
+                    to_w[s + 1] = weight;
+                }
                 break;
             }
         }
+    } else if (rslot >= 0) {
+        /* Existing reverse - update weight at receiver's slot */
+        float *to_w = nnpool_get_params(net->pool, to);
+        if (to_w) to_w[rslot + 1] = weight;
     }
 
     return eidx;
@@ -206,6 +225,10 @@ void network_remove_edge(network_t *net, int from, int to) {
         rrow[rslot].to = -1;
         net->pool->degrees[to]--;
         net->pool->edges[to * md + rslot].active = 0;
+
+        /* Clear the corresponding weight slot on the receiver (Option A) */
+        float *to_w = nnpool_get_params(net->pool, to);
+        if (to_w) to_w[rslot + 1] = 0.0f;
     }
 }
 

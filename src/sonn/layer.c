@@ -77,7 +77,9 @@ int layer_build_ffnn(network_t *net,
 
             for (int j = 0; j < prev_cnt; j++) {
                 int from = prev_start + j;
-                /* Random-ish small weights on the *edges* (used by current forward) */
+                /* Initial weight placed into the receiver (nid)'s weights[] at the
+                 * local edge slot assigned for this connection (Option A).
+                 */
                 float w = 0.1f * ((float)((nid + j) % 7) - 3.0f);
                 network_add_edge(net, from, nid, w);
             }
@@ -149,17 +151,14 @@ int layer_ffnn_forward(network_t *net, const float *inputs, float *outputs)
                 if (!erow[s].active) continue;
                 int from = erow[s].to;
 
-                /* Only consider neurons from previous layer */
+                /* Only consider neurons from previous layer.
+                 * Weight for this incoming connection is stored at the receiver's
+                 * weights[s] (Option A: local edge slot index == weight index).
+                 */
                 if (from >= prev_start && from < prev_start + prev_cnt) {
                     neuron_t *prev = nnpool_get_neuron(p, from);
                     if (prev) {
-                        /* Find edge weight */
-                        int slot = nnpool_find_edge_slot(p, from, nid);
-                        float w = 0.0f;
-                        if (slot >= 0) {
-                            int eidx = from * p->max_degree + slot;
-                            w = p->edges[eidx].strength;
-                        }
+                        float w = n->weights[s];   /* use neuron.weights directly */
                         sum += prev->error * w;
                     }
                 }
@@ -218,11 +217,10 @@ int layer_ffnn_train_step(network_t *net, const float *inputs, float target, flo
             int from = erow[s].to;
             if (from < prev_start || from >= prev_start + prev_cnt) continue;
 
-            int slot = nnpool_find_edge_slot(p, from, nid);
-            if (slot < 0) continue;
-
-            int eidx = from * p->max_degree + slot;
-            float w = p->edges[eidx].strength;
+            /* Use and update weight directly in the output neuron's weights[s]
+             * (Option A: local edge slot on receiver == weight index in neuron.weights)
+             */
+            float w = n->weights[s];
 
             /* Get previous activation (stored in error field) */
             neuron_t *prev = nnpool_get_neuron(p, from);
@@ -230,7 +228,7 @@ int layer_ffnn_train_step(network_t *net, const float *inputs, float target, flo
 
             /* Delta rule: w += lr * error * prev_act */
             w += lr * error * prev_act;
-            p->edges[eidx].strength = w;
+            n->weights[s] = w;
         }
 
         /* Update bias for this output neuron (the "input" to bias is always 1) */

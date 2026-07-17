@@ -18,7 +18,8 @@
  * Requirements:
  *   - All neural network configuration and operations are placed here.
  *   - Network is responsible for the "neuron" concept (add, remove, activation functions, etc.).
- *   - Network is responsible for edge semantics (add, remove, strength, etc.).
+ *   - Network is responsible for edge semantics (add, remove, topology, age, etc.).
+ *   - Main connection weights live in the target neuron's weights[] (indexed by local edge slot).
  *   - Network internally uses Pool to manage memory.
  *   - Pool is only responsible for basic memory management, access, and queries. It contains no neuron operations.
  */
@@ -43,7 +44,7 @@ int  network_add_neuron(network_t *net, activaton_t type);
 void network_remove_neuron(network_t *net, int id);
 
 /* Edge operations */
-int  network_add_edge(network_t *net, int from, int to, float strength);
+int  network_add_edge(network_t *net, int from, int to, float weight);
 void network_remove_edge(network_t *net, int from, int to);
 
 /* Queries */

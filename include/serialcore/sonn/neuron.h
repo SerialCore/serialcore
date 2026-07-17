@@ -39,7 +39,7 @@ typedef struct edge {
     int         from;
     int         to;
     int         active;
-    float       strength;
+    float       weight;
     float       age;
 } edge_t;
 

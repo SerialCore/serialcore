@@ -18,6 +18,7 @@ IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE. */
 #include <serialcore/math/xoshiross.h>
 
 #include <stdint.h>
+#include <string.h>
 
 /* This is xoshiro256** 1.0, one of our all-purpose, rock-solid
    generators. It has excellent (sub-ns) speed, a state (256 bits) that is
@@ -123,7 +124,72 @@ void long_jump(void) {
 
 #define POLY_DEG 256
 static const uint64_t charpoly[] = { 0x9d116f2bb0f0f001, 0x0280002bcefd1a5e, 0x04b4edcf26259f85, 0x0003c03c3f3ecb19 };
-#include "f2x.c"
+#define POLY_WORDS (((POLY_DEG) + 63) / 64)
+//#include "f2x.c"
+
+
+
+// a <- a * x mod charpoly
+static void f2x_mulx(uint64_t *const a) {
+	uint64_t carry = 0;
+	for (int i = 0; i < POLY_WORDS; i++) {
+		const uint64_t next_carry = a[i] >> 63;
+		a[i] = (a[i] << 1) | carry;
+		carry = next_carry;
+	}
+	// Coefficient of x^POLY_DEG after the shift.
+	int top;
+#if (POLY_DEG) % 64 == 0
+	top = (int)carry;
+#else
+	top = (a[POLY_DEG >> 6] >> (POLY_DEG & 63)) & 1;
+	a[POLY_DEG >> 6] &= ~(UINT64_C(1) << (POLY_DEG & 63));
+#endif
+	if (top)
+		for (int i = 0; i < POLY_WORDS; i++)
+			a[i] ^= charpoly[i];
+}
+
+// a <- a * b mod charpoly (Horner over the bits of a, from the top)
+static void f2x_mulmod(uint64_t *const a, const uint64_t *const b) {
+	uint64_t r[POLY_WORDS];
+	memset(r, 0, sizeof r);
+	for (int k = POLY_DEG - 1; k >= 0; k--) {
+		f2x_mulx(r);
+		if ((a[k >> 6] >> (k & 63)) & 1)
+			for (int i = 0; i < POLY_WORDS; i++)
+			  r[i] ^= b[i];
+	}
+	memcpy(a, r, sizeof r);
+}
+
+// out <- x^(c * 2^e) mod charpoly
+static void f2x_jumppoly_ce(uint64_t c, uint32_t e, uint64_t *const out) {
+	memset(out, 0, POLY_WORDS * sizeof *out);
+	out[0] = 1;                     // out = 1
+	for (int k = 63; k >= 0; k--) { // out = x^c
+		f2x_mulmod(out, out);
+		if ((c >> k) & 1)
+			f2x_mulx(out);
+	}
+	while (e--)
+		f2x_mulmod(out, out); // out = (x^c)^(2^e) = x^(c * 2^e)
+}
+
+// out <- x^n mod charpoly, where n = jump[0] + jump[1] * 2^64 + ... is the
+// little-endian integer held in the len words of jump (square-and-multiply
+// over the bits of n, from the most significant down).
+static void f2x_jumppoly_n(const uint64_t *const jump, const int len, uint64_t *const out) {
+	memset(out, 0, POLY_WORDS * sizeof *out);
+	out[0] = 1;                                // out = 1
+	for (int k = len * 64 - 1; k >= 0; k--) {  // out = x^n
+		f2x_mulmod(out, out);
+		if ((jump[k >> 6] >> (k & 63)) & 1)
+			f2x_mulx(out);
+	}
+}
+
+
 
 /* Applies the precomputed jump polynomial poly (= x^n mod charpoly for the
    desired distance n) to the state, using the same accumulate-and-step loop
