@@ -21,20 +21,22 @@
 #include <stdlib.h>
 #include <string.h>
 
-network_t* network_create(int max_neurons, int input_dim) {
+network_t* network_create(int max_neurons, int input_dim, int seed) {
     if (max_neurons <= 0) return NULL;
     if (input_dim <= 0) return NULL;
 
     network_t *net = (network_t*)calloc(1, sizeof(network_t));
     if (!net) return NULL;
 
-    net->pool = nnpool_create(max_neurons, input_dim);
+    net->pool = nnpool_create(max_neurons, input_dim, seed);
     if (!net->pool) {
         free(net);
         return NULL;
     }
 
     net->current_neurons = 0;
+    net->input_dim = input_dim;
+    net->seed = seed;
     return net;
 }
 

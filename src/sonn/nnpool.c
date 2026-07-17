@@ -19,10 +19,52 @@
  */
 
 #include <serialcore/sonn/nnpool.h>
+#include <serialcore/math/xoshiross.h>
 
 #include <stdlib.h>
+#include <stdint.h>
 
-nnpool_t* nnpool_create(int max_neurons, int input_dim)
+/* Initialize the parameters using the original next() / jump() symbols
+ * provided by xoshiross.h (implemented in xoshiro256ss.c).
+ *
+ * We "seed" by advancing the generator (mixing next() + jump()) a
+ * number of steps derived from the pool seed and the neuron id.
+ */
+static void generate_random_parameter(nnpool_t *p)
+{
+    int max_neurons = p->max_neurons;
+    int input_dim = p->input_dim;
+    int seed = p->seed;
+
+    for (int i = 0; i < max_neurons; i++) {
+        uint64_t nid = (uint64_t)p->neurons[i].id;
+
+        /* Mix using the original symbols */
+        uint32_t mix = (uint32_t)(seed ^ nid) & 0xFFu;
+        for (uint32_t k = 0; k < mix; k++) {
+            (void)next();
+        }
+        if (nid & 1) {
+            jump();   /* use original jump symbol */
+        }
+
+        float *slot = p->params + i * (input_dim + 1);
+
+        /* bias - small */
+        uint64_t r = next();
+        float f = (r >> 11) * (1.0f / 9007199254740992.0f);
+        slot[0] = (f * 2.0f - 1.0f) * 0.01f;
+
+        /* weights */
+        for (int w = 0; w < input_dim; w++) {
+            r = next();
+            f = (r >> 11) * (1.0f / 9007199254740992.0f);
+            slot[w + 1] = (f * 2.0f - 1.0f) * 0.1f;
+        }
+    }
+}
+
+nnpool_t* nnpool_create(int max_neurons, int input_dim, int seed)
 {
     if (max_neurons <= 0) return NULL;
 
@@ -31,49 +73,32 @@ nnpool_t* nnpool_create(int max_neurons, int input_dim)
 
     p->max_neurons = max_neurons;
     p->used_neurons = 0;
-    p->input_dim = input_dim;
     p->max_degree = SONN_DEGREE_MAX;
     p->max_edges = max_neurons * SONN_DEGREE_MAX;
+    p->input_dim = input_dim;
+    p->seed = seed;
 
     /* Fill the entire memory pool at creation time */
     p->neurons = (neuron_t*)calloc(max_neurons, sizeof(neuron_t));
 
-    /* Pre-assign a unique monotonic ID to every neuron slot at creation time.
-     * IDs are generated for all slots regardless of active/deactive state.
-     * Network has no permission to generate or assign neuron IDs.
-     */
-    uint64_t id_counter = 0;
+    /* Pre-assign a unique monotonic ID to every neuron slot at creation time */
     for (int i = 0; i < max_neurons; i++) {
-        p->neurons[i].id = id_counter++;
+        p->neurons[i].id = i;
     }
+
     /* Unified params block: bias at [0], weights at [1 .. input_dim] for each neuron */
-    p->params = (float*)calloc((size_t)max_neurons * (input_dim + 1), sizeof(float));
+    p->params = (float*)calloc(max_neurons * (input_dim + 1), sizeof(float));  
+    generate_random_parameter(p);
+    
     p->edges = (edge_t*)calloc(p->max_edges, sizeof(edge_t));
     p->degrees = (int*)calloc(max_neurons, sizeof(int));
+    p->free_list = (int*)calloc(max_neurons, sizeof(int));
 
-    /* Free list for fast slot reuse (LIFO) */
-    p->free_list = (int*)malloc((size_t)max_neurons * sizeof(int));
-    if (!p->free_list) {
-        free(p->degrees);
-        free(p->edges);
-        free(p->params);
-        free(p->neurons);
-        free(p);
-        return NULL;
-    }
-    /* Initialize free list in reverse so that acquire returns low ids first (0,1,2,...)
-     * (matches previous scan-from-0 behavior for initial contiguous allocation)
-     */
+    /* Initialize free list in reverse so that acquire returns low ids first (0,1,2,...) */
     for (int i = 0; i < max_neurons; i++) {
         p->free_list[i] = max_neurons - 1 - i;
     }
     p->free_count = max_neurons;
-
-    /* edges are zeroed by calloc:
-     * .active == 0 means empty slot.
-     * .to will be set only when .active is set.
-     * 0 is a valid neuron id, so always test .active, never rely on .to value alone.
-     */
 
     return p;
 }

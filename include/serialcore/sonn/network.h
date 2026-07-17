@@ -24,17 +24,18 @@
  */
 
 typedef struct network {
-    nnpool_t *pool;             /* underlying memory pool (capacity and storage only) */
+    nnpool_t    *pool;             /* underlying memory pool (capacity and storage only) */
 
     /* Network configuration and state */
-    int   current_neurons;      /* number of neurons currently in use */
-    int   input_dim;
-    int   max_neurons;
-    int   max_degree;
+    int         current_neurons;      /* number of neurons currently in use */
+    int         max_neurons;
+    int         max_degree;
+    int         input_dim;
+    int         seed;
 } network_t;
 
 /* Lifecycle */
-network_t* network_create(int max_neurons, int input_dim);
+network_t* network_create(int max_neurons, int input_dim, int seed);
 void network_destroy(network_t *net);
 
 /* Neuron operations */

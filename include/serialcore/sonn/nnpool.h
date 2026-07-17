@@ -41,9 +41,10 @@ typedef struct nnpool {
     /* Capacity information */
     int      max_neurons;           /* total capacity */
     int      used_neurons;          /* number of claimed units */
-    int      input_dim;             /* number of weights per neuron (total params per neuron = input_dim + 1, bias at 0) */
     int      max_degree;            /* maximum neighbors per neuron (fan-out limit) */
     int      max_edges;             /* max_edges = max_neurons * max_degree */
+    int      input_dim;             /* number of weights per neuron */
+    int      seed;                  /* RNG seed */
 
     /* Free list for O(1) slot reuse (stack of available indices) */
     int     *free_list;
@@ -51,7 +52,7 @@ typedef struct nnpool {
 } nnpool_t;
 
 /* Lifecycle */
-nnpool_t* nnpool_create(int max_neurons, int input_dim);
+nnpool_t* nnpool_create(int max_neurons, int input_dim, int seed);
 void nnpool_destroy(nnpool_t *p);
 
 /* Claim a raw slot from available capacity using free list.

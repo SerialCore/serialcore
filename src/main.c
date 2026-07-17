@@ -29,7 +29,7 @@ int main(void)
     /* Create a network with a pool of 256 slots, each with 128-dim weight vectors.
      * The actual fan-in is defined by the edges we add, not by pool input_dim.
      */
-    network_t *net = network_create(256, 64);
+    network_t *net = network_create(256, 64, 42);
     if (!net) {
         fprintf(stderr, "Failed to create network\n");
         return 1;
