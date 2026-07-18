@@ -45,6 +45,13 @@ void network_remove_neuron(network_t *net, int id);
 
 /* Edge operations */
 int  network_add_edge(network_t *net, int from, int to, float weight);
+
+/* Add a topology-only edge (no weight written into neuron's weights[]).
+ * Use this for GNG / self-organizing networks where neuron weights are prototypes,
+ * not connection strengths. Does not affect weights array (avoids prototype corruption).
+ */
+int  network_add_edge_topology(network_t *net, int from, int to);
+
 void network_remove_edge(network_t *net, int from, int to);
 
 /* Queries */
@@ -55,7 +62,67 @@ int network_get_neighbors(network_t *net, int id, int *out, int max_out);
  */
 uint64_t network_get_neuronid(network_t *net, int slot);
 
-/* Advanced: direct access to the underlying Pool (memory access only) */
-nnpool_t* network_get_pool(network_t *net);
+/* Compute Euclidean distance between input and neuron's prototype (weights) */
+float network_prototype_distance(network_t *net, int neuron_id, const float *input);
+
+/* Find the Best Matching Unit (neuron closest to input).
+ * Returns the neuron id, or -1 if no active neurons.
+ */
+int network_find_bmu(network_t *net, const float *input);
+
+/* Find BMU and second BMU (useful for GNG insertion).
+ * Returns BMU id. Writes second BMU to *second_bmu if provided.
+ */
+int network_find_bmu2(network_t *net, const float *input, int *second_bmu);
+
+/* Add error to a neuron (for GNG error accumulation) */
+void network_accumulate_error(network_t *net, int neuron_id, float err);
+
+/* Move neuron's prototype (weights) toward the input vector.
+ * Typically used for BMU and its topological neighbors.
+ */
+void network_adapt_prototype(network_t *net, int neuron_id, const float *input, float epsilon);
+
+/* Increment age on all edges of a neuron (or globally if id == -1) */
+void network_age_edges(network_t *net, int neuron_id);
+
+/* Reset the age of the edge between from and to to 0 */
+void network_reset_edge_age(network_t *net, int from, int to);
+
+/* Remove edges whose age exceeds max_age.
+ * Returns number of edges removed.
+ */
+int network_remove_old_edges(network_t *net, float max_age);
+
+/* Query the accumulated error of a neuron (for GNG error-driven growth) */
+float network_get_error(network_t *net, int neuron_id);
+
+/* Find the active neuron with the highest accumulated error.
+ * Returns neuron id, or -1 if none.
+ */
+int network_find_highest_error(network_t *net);
+
+/* Get the current age of the edge from -> to (returns -1 if no edge) */
+float network_get_edge_age(network_t *net, int from, int to);
+
+/* Multiply every neuron's accumulated error by factor (typically < 1.0).
+ * Call periodically as part of GNG to prevent unbounded error growth.
+ */
+void network_decay_errors(network_t *net, float factor);
+
+/* Insert a new neuron with prototype = average of a and b.
+ * Removes the direct edge between a and b (if any).
+ * Connects the new neuron topologically to both a and b.
+ * Returns the id of the new neuron, or -1 on failure.
+ *
+ * This is a common building block for Growing Neural Gas.
+ */
+int network_insert_between(network_t *net, int a, int b, activaton_t type);
+
+/* Adapt the BMU toward input with epsilon_bmu,
+ * and all its direct topological neighbors with epsilon_n.
+ * This is the classic "BMU + neighborhood" update step in many SO algorithms.
+ */
+void network_adapt_bmu_and_neighbors(network_t *net, int bmu, const float *input, float epsilon_bmu, float epsilon_n);
 
 #endif

@@ -14,8 +14,12 @@
  * Layer utilities for building a classic layered fully-connected
  * feedforward network as a *special implementation* on top of the SONN core.
  *
- * The underlying storage is the dynamic SONN (neurons + edges with Option A weights).
- * Layer metadata is stored directly inside network_t.
+ * IMPORTANT:
+ *   - The core network_t and nnpool know NOTHING about layers.
+ *   - All layer metadata (ranges, activations) lives in an internal per-network
+ *     table inside layer.c.
+ *   - Connection weights use Option A (stored in receiver's neuron.weights[s]
+ *     where s is the local edge slot).
  */
 
 /* Build a feedforward topology.

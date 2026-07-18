@@ -5,6 +5,7 @@
  */
 
 #include <serialcore/sonn/layer.h>
+#include <serialcore/sonn/activaton.h>
 
 #include <stdlib.h>
 #include <string.h>
@@ -62,7 +63,54 @@ static void reset_layered_state(layered_state_t *state)
     }
 }
 
+/* --- Internal helpers to reduce duplication --- */
 
+static int get_layer_info(layered_state_t *state, int l,
+                          int *start, int *cnt, activaton_t *act)
+{
+    if (!state || l < 0 || l >= state->num_layers) return -1;
+    layermeta_t *m = &state->layers[l];
+    if (start) *start = m->start_id;
+    if (cnt)   *cnt   = m->count;
+    if (act)   *act   = m->act;
+    return 0;
+}
+
+static void register_layer(layered_state_t *state, int start, int count, activaton_t act)
+{
+    if (!state || state->num_layers >= 16) return;
+    layermeta_t *m = &state->layers[state->num_layers++];
+    m->start_id = start;
+    m->count = count;
+    m->act = act;
+}
+
+/* Accumulate weighted sum from previous layer neurons into *sum.
+ * Uses the receiver's edge row + Option A (n->weights[s]).
+ */
+static void accumulate_from_prev_layer(nnpool_t *p, int nid,
+                                       int prev_start, int prev_cnt,
+                                       float *sum)
+{
+    if (!p || !sum) return;
+
+    neuron_t *n = nnpool_get_neuron(p, nid);
+    if (!n || !n->weights) return;
+
+    edge_t *erow = nnpool_edge_row(p, nid);
+    if (!erow) return;
+
+    for (int s = 0; s < p->max_degree; s++) {
+        if (!erow[s].active) continue;
+        int from = erow[s].to;
+        if (from >= prev_start && from < prev_start + prev_cnt) {
+            neuron_t *prev = nnpool_get_neuron(p, from);
+            if (prev) {
+                *sum += prev->activation * n->weights[s];
+            }
+        }
+    }
+}
 
 int layer_build_ffnn(network_t *net, const int *layer_sizes, int num_layers, const activaton_t *layer_acts)
 {
@@ -81,12 +129,8 @@ int layer_build_ffnn(network_t *net, const int *layer_sizes, int num_layers, con
 
     /* Create input layer neurons (no incoming edges from previous layer) */
     activaton_t in_act = layer_acts ? layer_acts[0] : GELU;
-    if (state->num_layers < 16) {
-        state->layers[state->num_layers].start_id = neuron_cursor;
-        state->layers[state->num_layers].count = layer_sizes[0];
-        state->layers[state->num_layers].act = in_act;
-        state->num_layers++;
-    }
+    register_layer(state, neuron_cursor, layer_sizes[0], in_act);
+
     for (int i = 0; i < layer_sizes[0]; i++) {
         int nid = network_add_neuron(net, in_act);
         if (nid != neuron_cursor) {
@@ -99,21 +143,16 @@ int layer_build_ffnn(network_t *net, const int *layer_sizes, int num_layers, con
     for (int l = 1; l < num_layers; l++) {
         activaton_t act = layer_acts ? layer_acts[l] : GELU;
         int layer_start = neuron_cursor;
-        if (state->num_layers < 16) {
-            state->layers[state->num_layers].start_id = layer_start;
-            state->layers[state->num_layers].count = layer_sizes[l];
-            state->layers[state->num_layers].act = act;
-            state->num_layers++;
-        }
+        register_layer(state, layer_start, layer_sizes[l], act);
+
+        int prev_start = 0, prev_cnt = 0;
+        get_layer_info(state, l-1, &prev_start, &prev_cnt, NULL);
 
         for (int i = 0; i < layer_sizes[l]; i++) {
             int nid = network_add_neuron(net, act);
             if (nid < 0) return -1;
 
             /* Connect fully from previous layer */
-            int prev_start = state->layers[l-1].start_id;
-            int prev_cnt = state->layers[l-1].count;
-
             for (int j = 0; j < prev_cnt; j++) {
                 int from = prev_start + j;
                 /* Initial weight placed into the receiver (nid)'s weights[] at the
@@ -145,13 +184,11 @@ int layer_get_range(network_t *net, int layer_idx, int *start_id, int *count)
 
 static float apply_act(float x, activaton_t a)
 {
-    extern float activaton_func(float x, activaton_t a);
     return activaton_func(x, a);
 }
 
 static float apply_gradient(float x, activaton_t a)
 {
-    extern float gradient_func(float x, activaton_t a);
     return gradient_func(x, a);
 }
 
@@ -162,14 +199,14 @@ int layer_ffnn_forward(network_t *net, const float *inputs, float *outputs)
     layered_state_t *state = get_layered_state(net);
     if (!state || state->num_layers < 2) return -1;
 
-    nnpool_t *p = network_get_pool(net);
+    nnpool_t *p = net->pool;
     if (!p) return -1;
 
     /* Store activations for this forward pass in the neuron's `activation` field.
      * `error` is reserved for self-organizing use (e.g. GNG error accumulation).
      */
-    int in_start = state->layers[0].start_id;
-    int in_cnt = state->layers[0].count;
+    int in_start = 0, in_cnt = 0;
+    get_layer_info(state, 0, &in_start, &in_cnt, NULL);
 
     for (int i = 0; i < in_cnt; i++) {
         neuron_t *n = nnpool_get_neuron(p, in_start + i);
@@ -178,9 +215,12 @@ int layer_ffnn_forward(network_t *net, const float *inputs, float *outputs)
 
     /* For each layer l >= 1 */
     for (int l = 1; l < state->num_layers; l++) {
-        int start = state->layers[l].start_id;
-        int cnt = state->layers[l].count;
-        activaton_t act = state->layers[l].act;
+        int start = 0, cnt = 0;
+        activaton_t act = GELU;
+        if (get_layer_info(state, l, &start, &cnt, &act) != 0) continue;
+
+        int prev_start = 0, prev_cnt = 0;
+        get_layer_info(state, l-1, &prev_start, &prev_cnt, NULL);
 
         for (int i = 0; i < cnt; i++) {
             int nid = start + i;
@@ -188,30 +228,7 @@ int layer_ffnn_forward(network_t *net, const float *inputs, float *outputs)
             if (!n) continue;
 
             float sum = 0.0f;
-
-            /* Sum over previous layer */
-            int prev_start = state->layers[l-1].start_id;
-            int prev_cnt = state->layers[l-1].count;
-
-            edge_t *erow = nnpool_edge_row(p, nid);
-            if (!erow) continue;
-
-            for (int s = 0; s < p->max_degree; s++) {
-                if (!erow[s].active) continue;
-                int from = erow[s].to;
-
-                /* Only consider neurons from previous layer.
-                 * Weight for this incoming connection is stored at the receiver's
-                 * weights[s] (Option A: local edge slot index == weight index).
-                 */
-                if (from >= prev_start && from < prev_start + prev_cnt) {
-                    neuron_t *prev = nnpool_get_neuron(p, from);
-                    if (prev) {
-                        float w = n->weights[s];   /* use neuron.weights directly */
-                        sum += prev->activation * w;
-                    }
-                }
-            }
+            accumulate_from_prev_layer(p, nid, prev_start, prev_cnt, &sum);
 
             sum += n->bias;
             float out = apply_act(sum, act);
@@ -220,8 +237,8 @@ int layer_ffnn_forward(network_t *net, const float *inputs, float *outputs)
     }
 
     /* Copy final layer activations to outputs */
-    int out_start = state->layers[state->num_layers-1].start_id;
-    int out_cnt = state->layers[state->num_layers-1].count;
+    int out_start = 0, out_cnt = 0;
+    get_layer_info(state, state->num_layers-1, &out_start, &out_cnt, NULL);
 
     for (int i = 0; i < out_cnt; i++) {
         neuron_t *n = nnpool_get_neuron(p, out_start + i);
@@ -238,7 +255,7 @@ int layer_ffnn_train_step(network_t *net, const float *inputs, float target, flo
     layered_state_t *state = get_layered_state(net);
     if (!state || state->num_layers < 2) return -1;
 
-    nnpool_t *p = network_get_pool(net);
+    nnpool_t *p = net->pool;
     if (!p) return -1;
 
     float pred[1];
@@ -250,8 +267,8 @@ int layer_ffnn_train_step(network_t *net, const float *inputs, float target, flo
 
     /* Zero deltas for all neurons in layers >=1 */
     for (int l = 1; l < state->num_layers; l++) {
-        int start = state->layers[l].start_id;
-        int cnt = state->layers[l].count;
+        int start = 0, cnt = 0;
+        get_layer_info(state, l, &start, &cnt, NULL);
         for (int i = 0; i < cnt; i++) {
             neuron_t *n = nnpool_get_neuron(p, start + i);
             if (n) n->delta = 0.0f;
@@ -260,8 +277,8 @@ int layer_ffnn_train_step(network_t *net, const float *inputs, float target, flo
 
     /* 1. Output layer deltas */
     int out_layer = state->num_layers - 1;
-    int out_start = state->layers[out_layer].start_id;
-    int out_cnt = state->layers[out_layer].count;
+    int out_start = 0, out_cnt = 0;
+    get_layer_info(state, out_layer, &out_start, &out_cnt, NULL);
 
     for (int i = 0; i < out_cnt; i++) {
         int nid = out_start + i;
@@ -276,12 +293,13 @@ int layer_ffnn_train_step(network_t *net, const float *inputs, float target, flo
 
     /* 2. Backpropagate deltas to hidden layers */
     for (int l = out_layer - 1; l >= 1; l--) {
-        int curr_start = state->layers[l].start_id;
-        int curr_cnt = state->layers[l].count;
-        int next_start = state->layers[l + 1].start_id;
-        int next_cnt = state->layers[l + 1].count;
+        int curr_start = 0, curr_cnt = 0;
+        get_layer_info(state, l, &curr_start, &curr_cnt, NULL);
 
-        /* Accumulate from next layer */
+        int next_start = 0, next_cnt = 0;
+        get_layer_info(state, l + 1, &next_start, &next_cnt, NULL);
+
+        /* Accumulate delta from next layer (reverse walk over next neuron's edges) */
         for (int j = 0; j < next_cnt; j++) {
             int next_nid = next_start + j;
             neuron_t *next_n = nnpool_get_neuron(p, next_nid);
@@ -294,10 +312,9 @@ int layer_ffnn_train_step(network_t *net, const float *inputs, float target, flo
                 if (!erow[s].active) continue;
                 int from = erow[s].to;
                 if (from >= curr_start && from < curr_start + curr_cnt) {
-                    float w = next_n->weights[s];
                     neuron_t *curr = nnpool_get_neuron(p, from);
                     if (curr) {
-                        curr->delta += next_n->delta * w;
+                        curr->delta += next_n->delta * next_n->weights[s];
                     }
                 }
             }
@@ -317,30 +334,28 @@ int layer_ffnn_train_step(network_t *net, const float *inputs, float target, flo
 
     /* 3. Update weights and biases for all layers (from layer 1 to output) */
     for (int l = 1; l < state->num_layers; l++) {
-        int start = state->layers[l].start_id;
-        int cnt = state->layers[l].count;
-        int prev_start = state->layers[l - 1].start_id;
-        int prev_cnt = state->layers[l - 1].count;
+        int start = 0, cnt = 0, prev_start = 0, prev_cnt = 0;
+        get_layer_info(state, l, &start, &cnt, NULL);
+        get_layer_info(state, l-1, &prev_start, &prev_cnt, NULL);
 
         for (int i = 0; i < cnt; i++) {
             int nid = start + i;
             neuron_t *n = nnpool_get_neuron(p, nid);
             if (!n) continue;
 
+            /* Use similar walk as forward but apply gradient */
             edge_t *erow = nnpool_edge_row(p, nid);
             if (!erow) continue;
 
             for (int s = 0; s < p->max_degree; s++) {
                 if (!erow[s].active) continue;
                 int from = erow[s].to;
-                if (from < prev_start || from >= prev_start + prev_cnt) continue;
+                if (from >= prev_start && from < prev_start + prev_cnt) {
+                    neuron_t *prev = nnpool_get_neuron(p, from);
+                    float prev_act = prev ? prev->activation : 0.0f;
 
-                neuron_t *prev = nnpool_get_neuron(p, from);
-                float prev_act = prev ? prev->activation : 0.0f;
-
-                float w = n->weights[s];
-                w += lr * n->delta * prev_act;
-                n->weights[s] = w;
+                    n->weights[s] += lr * n->delta * prev_act;
+                }
             }
 
             /* Update bias */
