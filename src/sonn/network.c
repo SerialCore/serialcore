@@ -21,7 +21,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-network_t* network_create(int max_neurons, int input_dim, int max_degree, int seed) {
+network_t* network_create(int max_neurons, int input_dim, int max_degree, int seed)
+{
     if (max_neurons <= 0) return NULL;
     if (input_dim <= 0) return NULL;
     if (max_degree <= 0) max_degree = SONN_DEFAULT_MAX_DEGREE;  /* from nnpool.h */
@@ -43,15 +44,18 @@ network_t* network_create(int max_neurons, int input_dim, int max_degree, int se
     return net;
 }
 
-void network_destroy(network_t *net) {
+void network_destroy(network_t *net)
+{
     if (!net) return;
+
     if (net->pool) {
         nnpool_destroy(net->pool);
     }
     free(net);
 }
 
-int network_add_neuron(network_t *net, activaton_t type) {
+int network_add_neuron(network_t *net, activaton_t type)
+{
     if (!net || !net->pool) return -1;
 
     /* All neuron semantic operations are performed in the Network layer.
@@ -83,7 +87,8 @@ int network_add_neuron(network_t *net, activaton_t type) {
     return slot;
 }
 
-void network_remove_neuron(network_t *net, int id) {
+void network_remove_neuron(network_t *net, int id)
+{
     if (!net || !net->pool) return;
     if (id < 0 || id >= net->pool->max_neurons) return;
 
@@ -124,7 +129,8 @@ void network_remove_neuron(network_t *net, int id) {
     net->current_neurons--;
 }
 
-int network_add_edge(network_t *net, int from, int to, float weight) {
+int network_add_edge(network_t *net, int from, int to, float weight)
+{
     if (!net || !net->pool) return -1;
     if (from < 0 || to < 0 || from >= net->pool->max_neurons || to >= net->pool->max_neurons) return -1;
     if (from == to) return -1;
@@ -174,8 +180,12 @@ int network_add_edge(network_t *net, int from, int to, float weight) {
     e->age = 0;
     e->active = 1;
 
-    /* Optional reverse edge (GNG style). The local slot 's' on the receiver (to) side
-     * is used as the index into the receiver's weights[] for this connection (Option A).
+    /* Reverse edge (always added when possible).
+     * This is a deliberate design choice for SONN:
+     * - Allows a neuron to easily iterate its *incoming* connections by walking its own edge row.
+     * - The local slot index 's' in the receiver's row is used for indexing into receiver->weights[s] (Option A).
+     * - For pure topology (future GNG), edges primarily provide connectivity + age.
+     * This makes both layered forward passes and dynamic graph algorithms natural.
      */
     int rslot = nnpool_find_edge_slot(net->pool, to, from);
     if (rslot < 0 && net->pool->degrees[to] < md) {
@@ -208,7 +218,8 @@ int network_add_edge(network_t *net, int from, int to, float weight) {
     return eidx;
 }
 
-void network_remove_edge(network_t *net, int from, int to) {
+void network_remove_edge(network_t *net, int from, int to)
+{
     if (!net || !net->pool) return;
 
     int md = net->pool->max_degree;
@@ -235,7 +246,8 @@ void network_remove_edge(network_t *net, int from, int to) {
     }
 }
 
-int network_get_neighbors(network_t *net, int id, int *out, int max_out) {
+int network_get_neighbors(network_t *net, int id, int *out, int max_out)
+{
     if (!net || !net->pool || id < 0 || !out || max_out <= 0) return 0;
     neuron_t *n = nnpool_get_neuron(net->pool, id);
     if (!n || !n->active) return 0;
@@ -258,6 +270,7 @@ uint64_t network_get_neuronid(network_t *net, int slot)
     return n ? n->id : 0;
 }
 
-nnpool_t* network_get_pool(network_t *net) {
+nnpool_t* network_get_pool(network_t *net)
+{
     return net ? net->pool : NULL;
 }

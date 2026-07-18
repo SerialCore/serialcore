@@ -30,6 +30,7 @@ typedef struct neuron {
     int         active;
     activaton_t type;
     float       error;          /* for GNG-style error accumulation (keep free for self-organizing use) */
+    float       delta;          /* error term for backpropagation */
     float       activation;     /* current activation value after applying activation function */
     float       bias;
     float       *weights;       /* points into pool->params[id*(input_dim+1) + 1] */
