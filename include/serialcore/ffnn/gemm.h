@@ -10,15 +10,24 @@
 #include <serialcore/sonn/activaton.h>
 
 /*
- * Tiny BLAS + GEMM helpers shared across all ffnn layer implementations.
- * Implemented in src/ffnn/gemm.c so this header is the 1:1 declaration
- * surface for that file.
+ * FFNN GEMM + tiny BLAS helpers.
  *
- * Notation in `ffnn_gemm`:
+ * The kernel is the classic ikj triple loop used by darknet's gemm_nn; it is
+ * cache-friendly enough that the Dense layer in the XOR test never becomes a
+ * bottleneck. OpenMP is enabled when -DOPENMP is set on the compile line, the
+ * same flag the rest of serialcore already respects.
+ *
+ * Notation:
+ *   ffnn_gemm(TA, TB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc)
+ *
  *   C[M,N] := alpha * op(A)[M,K] * op(B)[K,N] + beta * C[M,N]
- *   TA/TB:  0 -> identity, 1 -> transpose
- *   lda / ldb / ldc: row stride for the *untransposed* matrix of A/B/C
- *     (matches darknet's convention; an unrolled gemm_tn uses A[k*lda+i]).
+ *
+ *   TA / TB: 0 → no transpose (op is identity), 1 → op is A^T / B^T.
+ *
+ * Leading dimensions follow darknet's convention: lda is the stride for the
+ * *untransposed* matrix, so the inner access patterns are
+ *   !TA: A[i*lda + k]    TA: A[k*lda + i]
+ *   !TB: B[k*ldb + j]    TB: B[j*ldb + k]
  */
 
 void gemm(int TA, int TB, int M, int N, int K, float ALPHA,

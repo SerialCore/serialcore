@@ -7,20 +7,11 @@
 #include <serialcore/ffnn/ffnn.h>
 #include <serialcore/ffnn/dense.h>
 #include <serialcore/ffnn/gemm.h>
-#include <serialcore/math/xoshiross.h>
+#include <serialcore/ffnn/mmpool.h>
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <math.h>
-
-/* Map 53 high bits of next() into [0,1). Used by the He-init path for
- * the Dense layer family. */
-static float generate_random_parameter(void)
-{
-    uint64_t r = next();
-    return (float)((r >> 11) * (1.0 / 9007199254740992.0));
-}
 
 ffnn_network_t* ffnn_create(int inputs, int batch, float learning_rate, float momentum, float decay)
 {
@@ -42,6 +33,8 @@ ffnn_network_t* ffnn_create(int inputs, int batch, float learning_rate, float mo
     net->decay = decay;
     net->train = 0;
     net->index = 0;
+    net->compiled = 0;
+    net->pool = NULL;
 
     net->input_buffer = (float *)calloc((size_t)batch * inputs, sizeof(float));
     net->input = net->input_buffer;
@@ -54,10 +47,8 @@ void ffnn_destroy(ffnn_network_t *net)
     if (!net) return;
     for (int i = 0; i < net->n; ++i) {
         ffnn_layer_t *l = &net->layers[i];
-        free(l->weights);
-        free(l->biases);
-        free(l->weight_updates);
-        free(l->bias_updates);
+        /* weights / biases / weight_updates / bias_updates are views into
+         * net->pool's arenas; mmpool_destroy frees them in one shot. */
         free(l->output);
         free(l->pre_act);
         free(l->delta);
@@ -65,6 +56,7 @@ void ffnn_destroy(ffnn_network_t *net)
     }
     free(net->layers);
     free(net->input_buffer);
+    mmpool_destroy(net->pool);
     free(net);
 }
 
@@ -82,29 +74,24 @@ static int ffnn_build_layer(ffnn_layer_t *l, int batch, int inputs, int outputs,
         l->outputs    = outputs;
         l->batch      = batch;
 
-        l->weights        = (float *)calloc((size_t)outputs * inputs, sizeof(float));
-        l->biases         = (float *)calloc((size_t)outputs, sizeof(float));
-        l->weight_updates = (float *)calloc((size_t)outputs * inputs, sizeof(float));
-        l->bias_updates   = (float *)calloc((size_t)outputs, sizeof(float));
+        /* Learnable parameters (weights / biases / their update buffers)
+         * are NOT allocated here. They live in net->pool after
+         * ffnn_compile() runs. Until then these pointers stay NULL; the
+         * test harness must call ffnn_compile() before any forward pass. */
+        l->weights        = NULL;
+        l->biases         = NULL;
+        l->weight_updates = NULL;
+        l->bias_updates   = NULL;
 
+        /* Per-batch workspace belongs to the layer (it depends on `batch`
+         * and is never serialized, so it has no place in the pool). */
         l->output         = (float *)calloc((size_t)batch * outputs, sizeof(float));
         l->pre_act        = (float *)calloc((size_t)batch * outputs, sizeof(float));
         l->delta          = (float *)calloc((size_t)batch * outputs, sizeof(float));
         l->input_snapshot = (float *)calloc((size_t)batch * inputs, sizeof(float));
 
-        if (!l->weights || !l->biases || !l->weight_updates || !l->bias_updates ||
-            !l->output  || !l->pre_act || !l->delta || !l->input_snapshot) {
+        if (!l->output || !l->pre_act || !l->delta || !l->input_snapshot) {
             return -1;     /* ffnn_destroy will free what was allocated */
-        }
-
-        /* He-init for ReLU-family / GELU:
-         *     scale = sqrt(2.0 / inputs);  w ~ scale * uniform(-1, 1) */
-        const float scale = sqrtf(2.0f / (float)inputs);
-        for (int i = 0; i < outputs * inputs; ++i) {
-            l->weights[i] = scale * (2.0f * generate_random_parameter() - 1.0f);
-        }
-        for (int o = 0; o < outputs; ++o) {
-            l->biases[o] = 0.0f;
         }
 
         l->forward  = dense_forward;
@@ -152,12 +139,10 @@ int ffnn_add_layer(ffnn_network_t *net, int inputs, int outputs, layertype_t typ
     *slot = (ffnn_layer_t){0};
 
     if (ffnn_build_layer(slot, net->batch, inputs, outputs, type, activation) != 0) {
-        /* Free anything the partial build allocated; the slot is now
-         * zeroed so ffnn_destroy won't double-free later. */
-        free(slot->weights);        slot->weights = NULL;
-        free(slot->biases);         slot->biases = NULL;
-        free(slot->weight_updates); slot->weight_updates = NULL;
-        free(slot->bias_updates);   slot->bias_updates = NULL;
+        /* Free whatever workspace the partial build allocated; the slot
+         * is now zeroed so ffnn_destroy won't double-free later. The
+         * weight/bias pointers are NULL because they are only assigned
+         * views into net->pool by ffnn_compile(). */
         free(slot->output);         slot->output = NULL;
         free(slot->pre_act);        slot->pre_act = NULL;
         free(slot->delta);          slot->delta = NULL;
@@ -170,9 +155,51 @@ int ffnn_add_layer(ffnn_network_t *net, int inputs, int outputs, layertype_t typ
     return 0;
 }
 
+int ffnn_compile(ffnn_network_t *net)
+{
+    if (!net || net->n <= 0) return -1;
+    if (net->compiled) return 0;        /* idempotent */
+
+    /* Materialize the per-layer inputs[]/outputs[] arrays the pool expects. */
+    int *inputs_arr  = (int*)calloc((size_t)net->n, sizeof(int));
+    int *outputs_arr = (int*)calloc((size_t)net->n, sizeof(int));
+    if (!inputs_arr || !outputs_arr) {
+        free(inputs_arr); free(outputs_arr);
+        return -1;
+    }
+    for (int i = 0; i < net->n; ++i) {
+        inputs_arr[i]  = net->layers[i].inputs;
+        outputs_arr[i] = net->layers[i].outputs;
+    }
+
+    net->pool = mmpool_create(inputs_arr, outputs_arr, net->n);
+    free(inputs_arr);
+    free(outputs_arr);
+    if (!net->pool) return -1;
+
+    /* Wire per-layer views into the pool's contiguous arenas. The GEMM
+     * kernels in dense.c keep addressing l->weights, l->biases, etc. —
+     * they don't care that the storage is now a sub-pointer into one big
+     * arena rather than a standalone allocation. */
+    for (int i = 0; i < net->n; ++i) {
+        ffnn_layer_t *l = &net->layers[i];
+        l->weights        = mmpool_get_weights(net->pool, i);
+        l->biases         = mmpool_get_biases(net->pool, i);
+        l->weight_updates = mmpool_get_weight_updates(net->pool, i);
+        l->bias_updates   = mmpool_get_bias_updates(net->pool, i);
+    }
+
+    net->compiled = 1;
+    return 0;
+}
+
 void ffnn_forward(ffnn_network_t *net, const float *input, float *output)
 {
     if (!net || !input || !output) return;
+    if (!net->compiled || !net->pool) {
+        fprintf(stderr, "ffnn_forward: network not compiled — call ffnn_compile()\n");
+        return;
+    }
 
     /* Reset net->input to the owned buffer so the caller's data lands in a
      * stable place even after the previous forward repointed it. */

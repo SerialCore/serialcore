@@ -4,24 +4,6 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-/*
- * Dense / fully-connected layer implementation.
- *
- * Forward (one shot of M=batch rows):
- *   C[b,o]  += sum_i A[b,i] * B^T[o,i]      (gemm 0,1)
- *   C[b,o]  += bias[o]
- *   out[b,o] = activaton(C[b,o])
- *
- * Backward:
- *   delta[b,o] *= activaton'(pre_act[b,o])            (gradient at z)
- *   bias_updates[o] += sum_b delta[b,o]
- *   weight_updates[o*inputs + i] += sum_b delta[b,o] * in[b,i]
- *   net->delta[b,i] += sum_o delta[b,o] * W[o*inputs + i]
- *
- * The pre-activation sum `pre_act` is what the next backward step consumes
- * (and what gradient_func expects as its argument — see <serialcore/sonn/activaton.h>).
- */
-
 #include <serialcore/ffnn/dense.h>
 #include <serialcore/ffnn/ffnn.h>
 #include <serialcore/ffnn/gemm.h>

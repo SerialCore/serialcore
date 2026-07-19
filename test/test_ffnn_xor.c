@@ -54,6 +54,15 @@ int main(void)
         return 1;
     }
 
+    /* Build the parameter pool — allocates contiguous weight + bias arenas
+     * for all three layers and He-initializes them. The xoshiro generator
+     * was seeded above; mmpool_create draws from it. */
+    if (ffnn_compile(net) != 0) {
+        fprintf(stderr, "ffnn_compile failed\n");
+        ffnn_destroy(net);
+        return 1;
+    }
+
     float mse = 0.0f;
     for (int e = 0; e < epochs; e++) {
         mse = 0.0f;

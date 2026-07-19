@@ -8,6 +8,7 @@
 #define SERIALCORE_FFNN_FFNN
 
 #include <serialcore/sonn/activaton.h>
+#include <serialcore/ffnn/mmpool.h>
 
 /*
  * FFNN — feedforward, dense-matrix, fixed-topology neural network core.
@@ -81,6 +82,13 @@ struct ffnn_network {
 
     int           train;          /* 1 → forward also caches inputs for backward */
     int           index;          /* current layer index during forward/backward */
+    int           compiled;       /* 1 → ffnn_compile() has built net->pool and wired per-layer weight/bias views into it */
+
+    /* Parameter memory pool. NULL until ffnn_compile() is called; once
+     * built, every layer's `weights` / `biases` / `weight_updates` /
+     * `bias_updates` points into pool->params / pool->grads. Serialization
+     * is then a single fwrite/fread over pool->params. */
+    mmpool_t     *pool;
 };
 
 /* Lifecycle */
@@ -88,8 +96,19 @@ ffnn_network_t* ffnn_create(int inputs, int batch, float learning_rate, float mo
 void ffnn_destroy(ffnn_network_t *net);
 
 /* Append a new layer to the network. 
- * The layer is built in place by the internal factory. */
+ * The layer is built in place by the internal factory. Only the per-batch
+ * workspace (output / pre_act / delta / input_snapshot) is allocated here;
+ * the learnable parameters live in `net->pool`, which is built later by
+ * ffnn_compile() from the collected layer shapes. Calling forward /
+ * backward / update before ffnn_compile() is undefined. */
 int ffnn_add_layer(ffnn_network_t *net, int inputs, int outputs, layertype_t type, activaton_t activation);
+
+/* Build net->pool from the layers added so far and wire each layer's
+ * weight / bias / weight_update / bias_update pointers into the pool's
+ * contiguous arenas. He-init (formerly done in ffnn_build_layer) runs here,
+ * via the pool's generate_random_parameter path. Must be called exactly
+ * once after the last ffnn_add_layer; calling it again is a no-op. */
+int ffnn_compile(ffnn_network_t *net);
 
 /* Top-level passes. */
 void ffnn_forward(ffnn_network_t *net, const float *input, float *output);

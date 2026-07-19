@@ -24,8 +24,16 @@
 #include <stdlib.h>
 #include <stdint.h>
 
-/* Initialize the parameters using the RNG.
- * The generator must have been seeded via xoshiro_seed() before this is called.
+/*
+ * He-initialize the parameter arena.
+ *
+ *   weights[o*inputs + i] ~ scale * uniform(-1, 1),   scale = sqrt(2/inputs)
+ *   biases[o]             = 0
+ *
+ * The generator must have been seeded via xoshiro_seed() before this is
+ * called. This mirrors the per-layer init that used to live in
+ * ffnn_build_layer (see ffnn.c), but here it iterates the whole arena in a
+ * single pass — exactly like nnpool's generate_random_parameter.
  */
 static void generate_random_parameter(nnpool_t *p)
 {
