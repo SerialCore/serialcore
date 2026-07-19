@@ -142,7 +142,7 @@ static void remove_bidirectional_edge(network_t *net, int from, int to, int clea
     }
 }
 
-network_t* network_create(int max_neurons, int input_dim, int max_degree, int seed)
+network_t* network_create(int max_neurons, int input_dim, int max_degree)
 {
     if (max_neurons <= 0) return NULL;
     if (input_dim <= 0) return NULL;
@@ -151,7 +151,7 @@ network_t* network_create(int max_neurons, int input_dim, int max_degree, int se
     network_t *net = (network_t*)calloc(1, sizeof(network_t));
     if (!net) return NULL;
 
-    net->pool = nnpool_create(max_neurons, input_dim, max_degree, seed);
+    net->pool = nnpool_create(max_neurons, input_dim, max_degree);
     if (!net->pool) {
         free(net);
         return NULL;
@@ -161,7 +161,6 @@ network_t* network_create(int max_neurons, int input_dim, int max_degree, int se
     net->max_neurons = max_neurons;
     net->max_degree = max_degree;
     net->input_dim = input_dim;
-    net->seed = seed;
     return net;
 }
 

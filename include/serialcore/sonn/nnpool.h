@@ -45,7 +45,6 @@ typedef struct nnpool {
     int      max_degree;            /* maximum neighbors per neuron */
     int      max_edges;             /* max_edges = max_neurons * max_degree */
     int      input_dim;             /* size of each neuron's weight vector */
-    int      seed;                  /* RNG seed */
 
     /* Free list for O(1) slot reuse (stack of available indices) */
     int     *free_list;
@@ -53,7 +52,7 @@ typedef struct nnpool {
 } nnpool_t;
 
 /* Lifecycle */
-nnpool_t* nnpool_create(int max_neurons, int input_dim, int max_degree, int seed);
+nnpool_t* nnpool_create(int max_neurons, int input_dim, int max_degree);
 void nnpool_destroy(nnpool_t *p);
 
 /* Claim a raw slot from available capacity using free list.

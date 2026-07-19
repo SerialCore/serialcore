@@ -1,17 +1,5 @@
 CC = gcc
 CPPC = g++
-NVCC = nvcc
-
-GPU = 0
-CUDNN = 0
-OPENCV = 0
-OPENMP = 0
-DEBUG = 0
-
-ARCH = -gencode arch=compute_30,code=sm_30 \
-       -gencode arch=compute_35,code=sm_35 \
-       -gencode arch=compute_50,code=[sm_50,compute_50] \
-       -gencode arch=compute_52,code=[sm_52,compute_52]
 
 BUILD_DIR = build/
 OBJ_DIR = $(BUILD_DIR)obj/
@@ -21,6 +9,8 @@ INC_DIR = include/
 SRC_DIR = src/
 MATH_DIR = $(SRC_DIR)math/
 SONN_DIR = $(SRC_DIR)sonn/
+FFNN_DIR = $(SRC_DIR)ffnn/
+TEST_DIR = test/
 
 EXECUTABLE = $(BIN_DIR)serialcore
 
@@ -29,48 +19,21 @@ CFLAGS = -O2 -Wall -Wno-unknown-pragmas -Wfatal-errors -fPIC -Ofast
 CPPFLAGS = $(CFLAGS)
 LDFLAGS = -lm -pthread
 
-ifeq ($(DEBUG),1)
-    CFLAGS = -Wall -Wno-unused-result -Wno-unknown-pragmas -Wfatal-errors -fPIC -O0 -g -DDEBUG
-    CPPFLAGS = $(CFLAGS)
-endif
-
-ifeq ($(OPENMP),1)
-    CFLAGS += -fopenmp
-    CPPFLAGS += -fopenmp
-    LDFLAGS += -fopenmp
-endif
-
-CPP_SOURCES =
-ifeq ($(OPENCV),1)
-    CFLAGS += -DOPENCV
-    CPPFLAGS += -DOPENCV
-    INCLUDES += `pkg-config --cflags opencv`
-    LDFLAGS += `pkg-config --libs opencv` -lstdc++
-    CPP_SOURCES += $(wildcard $(CNN_DIR)*.cc)
-endif
-
-CU_SOURCES =
-ifeq ($(GPU),1)
-    CFLAGS += -DGPU
-    CPPFLAGS += -DGPU
-    INCLUDES += -I/usr/local/cuda/include/
-    LDFLAGS += -L/usr/local/cuda/lib64 -lcuda -lcudart -lcublas -lcurand -lstdc++
-    CU_SOURCES += $(wildcard $(CNN_DIR)*.cu)
-endif
-
-ifeq ($(CUDNN),1)
-    CFLAGS += -DCUDNN
-    CPPFLAGS += -DCUDNN
-    LDFLAGS += -lcudnn
-endif
-
-C_SOURCES = $(wildcard $(SRC_DIR)*.c $(MATH_DIR)*.c $(SONN_DIR)*.c)
+C_SOURCES = $(wildcard $(SRC_DIR)*.c $(MATH_DIR)*.c $(SONN_DIR)*.c $(FFNN_DIR)*.c)
 
 OBJECTS = $(patsubst %.c,$(OBJ_DIR)%.o,$(C_SOURCES)) \
           $(patsubst %.cc,$(OBJ_DIR)%.o,$(CPP_SOURCES)) \
           $(patsubst %.cu,$(OBJ_DIR)%.o,$(CU_SOURCES))
 
-all: $(EXECUTABLE)
+TEST_SOURCES = $(wildcard $(TEST_DIR)test_*.c)
+TEST_BINS = $(patsubst $(TEST_DIR)%.c,$(BIN_DIR)%,$(TEST_SOURCES))
+TEST_OBJS = $(patsubst $(TEST_DIR)%.c,$(OBJ_DIR).o,$(TEST_SOURCES))
+
+# Main executable's own translation unit; excluded from test binaries so
+# each test can provide its own main().
+MAIN_OBJ = $(OBJ_DIR)$(SRC_DIR)main.o
+
+all: $(EXECUTABLE) $(TEST_BINS)
 
 $(EXECUTABLE): $(OBJECTS)
 	@mkdir -p $(@D)
@@ -84,29 +47,24 @@ $(OBJ_DIR)%.o: %.cc
 	@mkdir -p $(@D)
 	$(CPPC) $(CPPFLAGS) $(INCLUDES) -c $< -o $@
 
-$(OBJ_DIR)%.o: %.cu
+$(BIN_DIR)test_%: $(OBJ_DIR)$(TEST_DIR)test_%.o $(filter-out $(MAIN_OBJ),$(OBJECTS))
 	@mkdir -p $(@D)
-	$(NVCC) $(ARCH) $(INCLUDES) --compiler-options "$(CFLAGS)" -c $< -o $@
+	$(CC) $< $(filter-out $(MAIN_OBJ),$(OBJECTS)) -o $@ $(LDFLAGS)
+
+$(OBJ_DIR)$(TEST_DIR)%.o: $(TEST_DIR)%.c
+	@mkdir -p $(@D)
+	$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
 
 run: $(EXECUTABLE)
 	./$(EXECUTABLE)
 
+test: $(TEST_BINS)
+	@set -e; for bin in $(TEST_BINS); do \
+		echo "--- $$bin ---"; \
+		./$$bin; \
+	done
+
 clean:
 	rm -rf $(BUILD_DIR)
 
-cpu:
-	$(MAKE) GPU=0 CUDNN=0
-
-gpu:
-	$(MAKE) GPU=1 CUDNN=0
-
-gpu-cudnn:
-	$(MAKE) GPU=1 CUDNN=1
-
-full:
-	$(MAKE) GPU=1 CUDNN=1 OPENCV=1 OPENMP=1
-
-dev:
-	$(MAKE) DEBUG=1
-
-.PHONY: all run clean print-sources cpu gpu gpu-cudnn full dev
+.PHONY: all run test clean

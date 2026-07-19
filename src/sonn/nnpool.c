@@ -32,9 +32,6 @@ static void generate_random_parameter(nnpool_t *p)
     int max_neurons = p->max_neurons;
     int input_dim = p->input_dim;
 
-    /* Seed the RNG before generating any parameters */
-    xoshiro_seed((uint64_t)p->seed);
-
     for (int i = 0; i < max_neurons; i++) {
         float *slot = p->params + i * (input_dim + 1);
 
@@ -52,7 +49,7 @@ static void generate_random_parameter(nnpool_t *p)
     }
 }
 
-nnpool_t* nnpool_create(int max_neurons, int input_dim, int max_degree, int seed)
+nnpool_t* nnpool_create(int max_neurons, int input_dim, int max_degree)
 {
     if (max_neurons <= 0) return NULL;
     if (max_degree <= 0) max_degree = SONN_DEFAULT_MAX_DEGREE;
@@ -65,7 +62,6 @@ nnpool_t* nnpool_create(int max_neurons, int input_dim, int max_degree, int seed
     p->max_degree = max_degree;
     p->max_edges = max_neurons * max_degree;
     p->input_dim = input_dim;
-    p->seed = seed;
 
     /* Fill the entire memory pool at creation time */
     p->neurons = (neuron_t*)calloc(max_neurons, sizeof(neuron_t));
