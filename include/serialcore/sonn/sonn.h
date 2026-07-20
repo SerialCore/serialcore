@@ -10,42 +10,29 @@
 #include <serialcore/sonn/activaton.h>
 #include <serialcore/sonn/nnpool.h>
 
-#include <stdint.h>
-
 /*
- * SONN — Self-Organizing Neural Network.
+ * SONN implementation — structural / plumbing layer only.
  *
- * Unlike the FFNN core (src/ffnn), the SONN has *no layer concept*. The caller
- * specifies only the input shape and the output shape; the network grows the
- * interior topology on its own as samples are observed.
+ * This translation unit contains NO self-organizing algorithm. It deliberately
+ * exposes only network construction, teardown, and topology queries. The
+ * Growing-Neural-Gas algorithm that used to live here has been moved to
+ * <serialcore/sonn/gng.h> (src/sonn/gng.c). Other algorithms (SOM, NG, ...) can
+ * build on this same primitive layer without being coupled to GNG.
  *
- * Layout at creation time:
+ * Responsibilities kept here:
+ *   - Allocate the network with fixed input/output anchors bracketing a free
+ *     pool of interior slots.
+ *   - Add / remove neurons (interior only; anchors are permanent).
+ *   - Add / remove bidirectional edges (with or without weight writes).
+ *   - Query adjacency, ranges, neuron IDs, and output activations.
  *
- *   slot 0          .. in_count-1            : input neurons  (fixed, input_dim of them)
- *   slot in_count   .. in_count+out_count-1  : output neurons (fixed, output_dim of them)
- *   slot in_count+out_count ..               : free pool, grown on demand
- *
- * Neuron roles:
- *   - Input neurons: their `activation` field is overwritten with the input
- *     vector each call to sonn_observe(); they act as anchors for the input
- *     space. They do not own meaningful prototypes.
- *   - Output neurons: their `activation` is read out as the network response.
- *     Their prototypes are pulled toward the supervised target when one is
- *     given; otherwise they live as free anchors.
- *   - Interior neurons: added and removed dynamically by sonn_observe()
- *     following a Growing-Neural-Gas-style rule (BMU selection + error-driven
- *     insertion between BMU and second BMU + aging edges).
- *
- * Requirements:
- *   - All neural network configuration and operations are placed here.
- *   - SONN is responsible for the "neuron" concept (add, remove, activation
- *     functions, etc.) and for edge semantics (add, remove, topology, age).
- *   - Main connection weights live in the target neuron's weights[] (indexed by
- *     local edge slot).
- *   - SONN internally uses Pool to manage memory.
- *   - Pool is only responsible for basic memory management, access, and
- *     queries. It contains no neuron operations.
+ * All raw memory allocation and slot management is delegated to the Pool.
  */
+
+/* Maximum degree supported by nnpool layouts that don't specify one. Used
+ * only as a default by sonn_create(); algorithm layers may pass an explicit
+ * value. */
+#define SONN_DEFAULT_MAX_DEGREE 64
 
 typedef struct sonn {
     nnpool_t    *pool;             /* underlying memory pool (capacity and storage only) */
@@ -62,159 +49,43 @@ typedef struct sonn {
     int         in_count;
     int         out_start;
     int         out_count;
-
-    /* Counters driving the auto-growth policy in sonn_observe() */
-    int         insert_interval;     /* insert a neuron every N observations (0 = disabled) */
-    int         observe_count;       /* observations since the last insertion */
-    float       max_age;             /* edge age beyond which it is pruned */
-    float       error_decay;         /* per-step error decay factor */
 } sonn_t;
 
-/* Lifecycle.
- * Pre-creates `input_dim` input neurons and `output_dim` output neurons. The
- * remaining `max_neurons - input_dim - output_dim` slots form the free pool
- * from which interior neurons are grown by sonn_observe().
- */
+/* Lifecycle */
 sonn_t* sonn_create(int input_dim, int output_dim, int max_neurons, int max_degree);
-void    sonn_destroy(sonn_t *s);
+void sonn_destroy(sonn_t *s);
 
 /* Neuron operations */
 int  sonn_add_neuron(sonn_t *s, activaton_t type);
 void sonn_remove_neuron(sonn_t *s, int id);
 
 /* Edge operations */
-int  sonn_add_edge(sonn_t *s, int from, int to, float weight);
+int sonn_add_edge(sonn_t *s, int from, int to, float weight);
 
 /* Add a topology-only edge (no weight written into neuron's weights[]).
- * Use this for GNG / self-organizing networks where neuron weights are
- * prototypes, not connection strengths. Does not affect weights array (avoids
- * prototype corruption).
+ * Use this for GNG / self-organizing networks where neuron weights are prototypes.
  */
-int  sonn_add_edge_topology(sonn_t *s, int from, int to);
+int sonn_add_edge_topology(sonn_t *s, int from, int to);
 
 void sonn_remove_edge(sonn_t *s, int from, int to);
 
+/* A neuron slot is "interior" if it is not one of the fixed input anchors nor
+ * one of the fixed output anchors. Interior neurons are the ones algorithm
+ * layers (GNG, SOM, ...) grow and adapt. */
+int sonn_is_interior(sonn_t *s, int id);
+
 /* Queries */
 int sonn_get_neighbors(sonn_t *s, int id, int *out, int max_out);
-
-/* Get the pre-assigned identity ID of the neuron at the given storage slot.
- * The ID was generated by the Pool at creation time.
- */
-uint64_t sonn_get_neuronid(sonn_t *s, int slot);
-
-/* Compute Euclidean distance between input and neuron's prototype (weights) */
-float sonn_prototype_distance(sonn_t *s, int neuron_id, const float *input);
-
-/* Find the Best Matching Unit (neuron closest to input).
- * Examines only *interior* neurons (skips the fixed input/output anchors).
- * Returns the neuron id, or -1 if no interior neurons exist.
- */
-int sonn_find_bmu(sonn_t *s, const float *input);
-
-/* Find BMU and second BMU (useful for GNG insertion).
- * Examines only *interior* neurons. Writes second BMU to *second_bmu if
- * provided. Returns BMU id, or -1 if no interior neurons exist.
- */
-int sonn_find_bmu2(sonn_t *s, const float *input, int *second_bmu);
-
-/* Add error to a neuron (for GNG error accumulation) */
-void sonn_accumulate_error(sonn_t *s, int neuron_id, float err);
-
-/* Move neuron's prototype (weights) toward the input vector.
- * Typically used for BMU and its topological neighbors.
- */
-void sonn_adapt_prototype(sonn_t *s, int neuron_id, const float *input, float epsilon);
-
-/* Increment age on all edges of a neuron (or globally if id == -1) */
-void sonn_age_edges(sonn_t *s, int neuron_id);
-
-/* Reset the age of the edge from -> to to 0 */
-void sonn_reset_edge_age(sonn_t *s, int from, int to);
-
-/* Remove edges whose age exceeds max_age.
- * Returns number of edges removed.
- */
-int sonn_remove_old_edges(sonn_t *s, float max_age);
-
-/* Query the accumulated error of a neuron (for GNG error-driven growth) */
-float sonn_get_error(sonn_t *s, int neuron_id);
-
-/* Find the active *interior* neuron with the highest accumulated error.
- * Returns neuron id, or -1 if none.
- */
-int sonn_find_highest_error(sonn_t *s);
-
-/* Get the current age of the edge from -> to (returns -1 if no edge) */
-float sonn_get_edge_age(sonn_t *s, int from, int to);
-
-/* Multiply every neuron's accumulated error by factor (typically < 1.0).
- * Call periodically as part of GNG to prevent unbounded error growth.
- */
-void sonn_decay_errors(sonn_t *s, float factor);
-
-/* Insert a new neuron with prototype = average of a and b.
- * Removes the direct edge between a and b (if any).
- * Connects the new neuron topologically to both a and b.
- * Returns the id of the new neuron, or -1 on failure.
- *
- * Common building block for Growing Neural Gas.
- */
-int sonn_insert_between(sonn_t *s, int a, int b, activaton_t type);
-
-/* Adapt the BMU toward input with epsilon_bmu,
- * and all its direct topological neighbors with epsilon_n.
- * This is the classic "BMU + neighborhood" update step in many SO algorithms.
- */
-void sonn_adapt_bmu_and_neighbors(sonn_t *s, int bmu, const float *input,
-                                    float epsilon_bmu, float epsilon_n);
-
-/* --- High-level auto-growth API ------------------------------------------ */
+int sonn_get_neuronid(sonn_t *s, int slot);
 
 /* Range accessors for the fixed input/output neuron anchors. */
 int sonn_get_input_range(sonn_t *s, int *start, int *count);
 int sonn_get_output_range(sonn_t *s, int *start, int *count);
 
-/* Configure the auto-growth policy used by sonn_observe().
- *   insert_interval : insert a new interior neuron every N observations
- *                     (0 disables insertion, only adaptation is performed).
- *   max_age         : edges older than this are pruned each observation.
- *   error_decay     : error scaling applied each observation (e.g. 0.99).
- * Passing 0/0/0 restores the built-in defaults (insert_interval=50,
- * max_age=50, error_decay=0.99).
- */
-void sonn_configure_growth(sonn_t *s, int insert_interval, float max_age, float error_decay);
-
-/* Present one sample to the network and let it grow / adapt.
- *
- *   x : input vector of length input_dim. Clamped onto the input neurons'
- *       activations and used as the SO "signal".
- *   y : optional target vector of length output_dim. When non-NULL, each
- *       output neuron's prototype is pulled toward the corresponding target
- *       by `eps_out`. When NULL, only unsupervised growth happens.
- *
- * One call performs the following Growing-Neural-Gas-style step:
- *   1. Clamp input neuron activations to x.
- *   2. Find BMU / second BMU among interior neurons; if no interior exists
- *      yet, seed one as a copy of x.
- *   3. If a second BMU exists, ensure a topology edge BMU<->2nd-BMU exists
- *      and reset its age.
- *   4. Adapt BMU and its neighbors' prototypes toward x.
- *   5. Accumulate squared distance as error on BMU.
- *   6. Age edges of the BMU; prune edges older than s->max_age.
- *   7. Decay all errors by s->error_decay.
- *   8. Every `insert_interval` observations, insert a new neuron between the
- *      highest-error neuron and its highest-error neighbor.
- *   9. If y is given, pull output neuron prototypes toward y.
- *
- * Returns 0 on success.
- */
-int sonn_observe(sonn_t *s, const float *x, const float *y,
-                  float eps_bmu, float eps_n, float eps_out);
-
 /* Read out the current activations of the output neurons into `out` (length
- * output_dim). The output neurons' `activation` field is updated by
- * sonn_observe() based on their prototype adaptation; no propagation pass is
- * performed because the SONN is shape-driven, not layer-driven.
+ * output_dim). Algorithm layers may update output activations directly when
+ * processing a sample; no propagation pass is performed because the SONN is
+ * shape-driven, not layer-driven.
  */
 int sonn_get_output(sonn_t *s, float *out);
 
