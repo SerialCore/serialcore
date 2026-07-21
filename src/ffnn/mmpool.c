@@ -11,28 +11,18 @@
 #include <stdint.h>
 #include <math.h>
 
-/*
- * He-initialize the parameter arena.
- *
- *   weights[o*inputs + i] ~ scale * uniform(-1, 1),   scale = sqrt(2/inputs)
- *   biases[o]             = 0
- *
- * The generator must have been seeded via xoshiro_seed() before this is
- * called. This mirrors the per-layer init that used to live in
- * ffnn_build_layer (see ffnn.c), but here it iterates the whole arena in a
- * single pass — exactly like nnpool's generate_random_parameter.
- */
+/* He-initialize the parameter arena */
 static void generate_random_parameter(mmpool_t *p)
 {
     for (int l = 0; l < p->n_layers; ++l) {
-        const int inputs  = p->layer_inputs[l];
-        const int outputs = p->layer_outputs[l];
-        const int nw      = outputs * inputs;
+        int inputs  = p->layer_inputs[l];
+        int outputs = p->layer_outputs[l];
+        int nw      = outputs * inputs;
 
         float *weights = p->params + p->offs[l];
         float *biases  = weights + nw;
 
-        const float scale = sqrtf(2.0f / (float)inputs);
+        float scale = sqrtf(2.0f / (float)inputs);
         for (int i = 0; i < nw; ++i) {
             uint64_t r = next();
             float u = (float)((r >> 11) * (1.0 / 9007199254740992.0));
@@ -53,9 +43,8 @@ mmpool_t* mmpool_create(const int *inputs_arr, const int *outputs_arr, int n_lay
 
     p->n_layers = n_layers;
 
-    /* Per-layer geometry + offset table. We build offsets[l] as the prefix
-     * sum of `weight_count + bias_count == outputs*inputs + outputs` over
-     * the two shape arrays. */
+    /* Per-layer geometry + offset table. 
+     * Build offsets[l] as the prefix sum of `weight_count + bias_count == outputs*inputs + outputs`. */
     p->offs          = (int*)calloc((size_t)n_layers + 1, sizeof(int));
     p->layer_inputs  = (int*)calloc((size_t)n_layers,     sizeof(int));
     p->layer_outputs = (int*)calloc((size_t)n_layers,     sizeof(int));
@@ -78,8 +67,7 @@ mmpool_t* mmpool_create(const int *inputs_arr, const int *outputs_arr, int n_lay
     p->offs[n_layers] = total;
     p->param_count = total;
 
-    /* Fill the entire memory pool at creation time — contiguous arenas
-     * that hold every learnable parameter (resp. gradient) of the net. */
+    /* Fill the entire memory pool at creation time. */
     p->params = (float*)calloc((size_t)total, sizeof(float));
     p->grads  = (float*)calloc((size_t)total, sizeof(float));
     if (!p->params || !p->grads) {

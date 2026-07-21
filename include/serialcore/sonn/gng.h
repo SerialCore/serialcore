@@ -9,25 +9,12 @@
 
 #include <serialcore/sonn/sonn.h>
 
-/*
- * GNG — Growing Neural Gas (Fritzke, 1995) algorithm layer built on top of
- * the generic SONN plumbing in <serialcore/sonn/sonn.h>.
- *
- * This translation unit is the first of potentially several self-organizing
- * algorithm layers (GNG, SOM, NG, ESS, ...) that share the same underlying
- * network. Each algorithm owns its own driver function; the SONN core never
- * calls any algorithm code.
- *
- * A `gng_t` wraps a caller-owned `sonn_t *net` together with the GNG
- * policy knobs that the generic SONN no longer knows about:
- *   - insert_interval : insert a new interior neuron every N observations.
- *   - max_age          : edges older than this are pruned each observation.
- *   - error_decay      : error scaling applied each observation (e.g. 0.99).
- *
- * Lifecycle: create a sonn_t with sonn_create(), then create a gng_t on top
- * of it; destroy the gng_t first, then destroy the sonn_t. The gng does not
- * own the sonn.
- */
+/* GNG — Growing Neural Gas (Fritzke, 1995) algorithm layer built on top of the generic SONN. */
+
+/* Default GNG policy knobs. */
+#define GNG_DEFAULT_INSERT_INTERVAL 50
+#define GNG_DEFAULT_MAX_AGE         50.0f
+#define GNG_DEFAULT_ERROR_DECAY     0.99f
 
 typedef struct gng {
     sonn_t *net;              /* underlying generic SO network (owned by caller) */
@@ -37,17 +24,9 @@ typedef struct gng {
     int     observe_count;    /* observations since the last insertion */
 } gng_t;
 
-/* Default GNG policy knobs. */
-#define GNG_DEFAULT_INSERT_INTERVAL 50
-#define GNG_DEFAULT_MAX_AGE         50.0f
-#define GNG_DEFAULT_ERROR_DECAY     0.99f
-
 /* Lifecycle. The gng borrows the sonn pointer; caller still owns it. */
 gng_t *gng_create(sonn_t *net, int insert_interval, float max_age, float error_decay);
 void gng_destroy(gng_t *g);
-
-/* Build a gng with the default policy knobs. */
-gng_t *gng_create_default(sonn_t *net);
 
 /* Update the policy knobs at runtime. Passing 0/0/0 restores the defaults. */
 void gng_configure(gng_t *g, int insert_interval, float max_age, float error_decay);

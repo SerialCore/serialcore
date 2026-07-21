@@ -9,22 +9,6 @@
 
 #include <stdlib.h>
 
-/*
- * MM Pool implementation — pure memory management for fixed-topology FFNN.
- *
- * Strict constraints (mirror nnpool.c):
- *   - At creation time, "fill" the entire pool from a declared layer-shape
- *     array (one-time full allocation; no growth, no shrink, no free list).
- *   - Maintain per-layer offsets (O(1) parameter access).
- *   - Provide direct access to raw storage and basic storage queries.
- *
- * Pool **does not contain**:
- *   - Layer forward/backward/update operations (those live in dense.c /
- *     ffnn.c with semantics).
- *   - Per-batch workspace buffers (output / pre_act / delta /
- *     input_snapshot). Those depend on `batch` and stay on the layer.
- */
-
 typedef struct mmpool {
     float *params;          /* [param_count] — all weights + biases  */
     float *grads;           /* [param_count] — all weight_updates + bias_updates */
@@ -38,11 +22,9 @@ typedef struct mmpool {
      */
     int   *offs;            /* Per-layer offset table, length n_layers + 1 */
 
-    /* Per-layer geometry snapshot, length n_layers */
     int   *layer_inputs;    /* [n_layers] */
     int   *layer_outputs;   /* [n_layers] */
 
-    /* Capacity information */
     int    n_layers;        /* number of layers the pool was built for */
     int    param_count;     /* total floats in `params` (== total in `grads`) */
 } mmpool_t;

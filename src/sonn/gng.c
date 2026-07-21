@@ -23,12 +23,6 @@ gng_t *gng_create(sonn_t *net, int insert_interval, float max_age, float error_d
     return g;
 }
 
-gng_t *gng_create_default(sonn_t *net)
-{
-    return gng_create(net, GNG_DEFAULT_INSERT_INTERVAL,
-                      GNG_DEFAULT_MAX_AGE, GNG_DEFAULT_ERROR_DECAY);
-}
-
 void gng_destroy(gng_t *g)
 {
     free(g);
@@ -114,8 +108,7 @@ void gng_adapt_prototype(sonn_t *s, int neuron_id, const float *input, float eps
     }
 }
 
-void gng_adapt_bmu_and_neighbors(sonn_t *s, int bmu, const float *input,
-                                   float epsilon_bmu, float epsilon_n)
+void gng_adapt_bmu_and_neighbors(sonn_t *s, int bmu, const float *input, float epsilon_bmu, float epsilon_n)
 {
     if (!s || !input || bmu < 0 || epsilon_bmu <= 0) return;
 
@@ -285,11 +278,10 @@ int gng_insert_between(sonn_t *s, int a, int b, activaton_t type)
     }
 
     sonn_remove_edge(s, a, b);
-    sonn_add_edge_topology(s, a, new_id);
-    sonn_add_edge_topology(s, b, new_id);
+    sonn_add_edge(s, a, new_id);
+    sonn_add_edge(s, b, new_id);
 
-    /* New neuron inherits half the error of the high-error parent (a) so it
-     * stays a candidate for further growth. */
+    /* New neuron inherits half the error of the high-error parent (a) so it stays a candidate for further growth. */
     nn->error = 0.5f * na->error;
     na->error *= 0.5f;
     nb->error *= 0.5f;
@@ -297,9 +289,7 @@ int gng_insert_between(sonn_t *s, int a, int b, activaton_t type)
     return new_id;
 }
 
-/* Seed the network with a single interior neuron whose prototype equals the
- * first observed input vector. Called by gng_observe() when no interior
- * neurons exist yet. Returns the new neuron id, or -1. */
+/* Seed the network with a single interior neuron whose prototype equals the first observed input vector. */
 static int seed_interior(sonn_t *s, const float *x)
 {
     int id = sonn_add_neuron(s, GELU);
@@ -338,8 +328,7 @@ static int highest_error_neighbor(sonn_t *s, int a)
     return best;
 }
 
-int gng_observe(gng_t *g, const float *x, const float *y,
-                float eps_bmu, float eps_n, float eps_out)
+int gng_observe(gng_t *g, const float *x, const float *y, float eps_bmu, float eps_n, float eps_out)
 {
     if (!g || !g->net || !g->net->pool || !x) return -1;
     sonn_t *s = g->net;
@@ -364,14 +353,13 @@ int gng_observe(gng_t *g, const float *x, const float *y,
     /* 3. Maintain a topology edge between BMU and second BMU. */
     if (bmu >= 0 && second >= 0) {
         if (nnpool_find_edge_slot(s->pool, bmu, second) < 0) {
-            sonn_add_edge_topology(s, bmu, second);
+            sonn_add_edge(s, bmu, second);
         }
         gng_reset_edge_age(s, bmu, second);
     }
 
     /* 4. Adapt BMU and neighbors toward x. Cache basic distance. */
     float dist = gng_prototype_distance(s, bmu, x);
-
     gng_adapt_bmu_and_neighbors(s, bmu, x, eps_bmu, eps_n);
 
     /* 5. Accumulate the squared distance as error on the BMU. */

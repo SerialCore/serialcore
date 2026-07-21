@@ -39,9 +39,7 @@ void dense_forward(ffnn_layer_t *l, ffnn_network_t *net)
 
 void dense_backward(ffnn_layer_t *l, ffnn_network_t *net)
 {
-    /* Apply activation derivative at z (pre_act). `l->delta` has been set
-     * upstream by the network (output layer gets target-output; hidden
-     * layers get the chained delta from the next layer). */
+    /* Apply activation derivative at z (pre_act). `l->delta` has been set upstream by the network */
     gemm_gradient_array(l->pre_act, l->batch * l->outputs, l->activation, l->delta);
 
     /* bias_updates += sum_b delta[b,*] (per output) */

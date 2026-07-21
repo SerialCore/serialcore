@@ -47,8 +47,6 @@ void ffnn_destroy(ffnn_network_t *net)
     if (!net) return;
     for (int i = 0; i < net->n; ++i) {
         ffnn_layer_t *l = &net->layers[i];
-        /* weights / biases / weight_updates / bias_updates are views into
-         * net->pool's arenas; mmpool_destroy frees them in one shot. */
         free(l->output);
         free(l->pre_act);
         free(l->delta);
@@ -58,61 +56,6 @@ void ffnn_destroy(ffnn_network_t *net)
     free(net->input_buffer);
     mmpool_destroy(net->pool);
     free(net);
-}
-
-/* Build a layer of `type` in `*l` (which must already be zeroed). Today
- * only FFNN_DENSE is wired up; the other families are reserved slots that
- * record `type`/shape so the bookkeeping in ffnn_add_layer stays
- * consistent. Returns 0 on success, -1 on an unknown/unsupported type. */
-static int ffnn_build_layer(ffnn_layer_t *l, int batch, int inputs, int outputs, layertype_t type, activaton_t activation)
-{
-    switch (type) {
-    case FFNN_DENSE: {
-        l->type       = FFNN_DENSE;
-        l->activation = activation;
-        l->inputs     = inputs;
-        l->outputs    = outputs;
-        l->batch      = batch;
-
-        /* Learnable parameters (weights / biases / their update buffers)
-         * are NOT allocated here. They live in net->pool after
-         * ffnn_compile() runs. Until then these pointers stay NULL; the
-         * test harness must call ffnn_compile() before any forward pass. */
-        l->weights        = NULL;
-        l->biases         = NULL;
-        l->weight_updates = NULL;
-        l->bias_updates   = NULL;
-
-        /* Per-batch workspace belongs to the layer (it depends on `batch`
-         * and is never serialized, so it has no place in the pool). */
-        l->output         = (float *)calloc((size_t)batch * outputs, sizeof(float));
-        l->pre_act        = (float *)calloc((size_t)batch * outputs, sizeof(float));
-        l->delta          = (float *)calloc((size_t)batch * outputs, sizeof(float));
-        l->input_snapshot = (float *)calloc((size_t)batch * inputs, sizeof(float));
-
-        if (!l->output || !l->pre_act || !l->delta || !l->input_snapshot) {
-            return -1;     /* ffnn_destroy will free what was allocated */
-        }
-
-        l->forward  = dense_forward;
-        l->backward = dense_backward;
-        l->update   = dense_update;
-        return 0;
-    }
-
-    case FFNN_CONVOLUTIONAL:
-    case FFNN_MAXPOOL:
-    case FFNN_BATCHNORM:
-    case FFNN_SOFTMAX:
-    case FFNN_BLANK:
-    default:
-        l->type       = type;
-        l->activation = activation;
-        l->inputs     = inputs;
-        l->outputs    = outputs;
-        l->batch      = batch;
-        return 0;
-    }
 }
 
 int ffnn_add_layer(ffnn_network_t *net, int inputs, int outputs, layertype_t type, activaton_t activation)
@@ -138,11 +81,56 @@ int ffnn_add_layer(ffnn_network_t *net, int inputs, int outputs, layertype_t typ
     ffnn_layer_t *slot = &net->layers[net->n];
     *slot = (ffnn_layer_t){0};
 
-    if (ffnn_build_layer(slot, net->batch, inputs, outputs, type, activation) != 0) {
-        /* Free whatever workspace the partial build allocated; the slot
-         * is now zeroed so ffnn_destroy won't double-free later. The
-         * weight/bias pointers are NULL because they are only assigned
-         * views into net->pool by ffnn_compile(). */
+    int batch = net->batch;
+    int layer_built = 0;
+    switch (type) {
+        case FFNN_DENSE: {
+            slot->type       = FFNN_DENSE;
+            slot->activation = activation;
+            slot->inputs     = inputs;
+            slot->outputs    = outputs;
+            slot->batch      = batch;
+
+            /* Learnable parameters are NOT allocated here. They live in net->pool after
+             * ffnn_compile() runs. Until then these pointers stay NULL; the
+             * test harness must call ffnn_compile() before any forward pass. */
+            slot->weights        = NULL;
+            slot->biases         = NULL;
+            slot->weight_updates = NULL;
+            slot->bias_updates   = NULL;
+
+            /* Per-batch workspace belongs to the layer (it depends on `batch`
+             * and is never serialized, so it has no place in the pool). */
+            slot->output         = (float *)calloc((size_t)batch * outputs, sizeof(float));
+            slot->pre_act        = (float *)calloc((size_t)batch * outputs, sizeof(float));
+            slot->delta          = (float *)calloc((size_t)batch * outputs, sizeof(float));
+            slot->input_snapshot = (float *)calloc((size_t)batch * inputs, sizeof(float));
+
+            if (!slot->output || !slot->pre_act || !slot->delta || !slot->input_snapshot) {
+                layer_built = -1;     /* ffnn_destroy will free what was allocated */
+            }
+
+            slot->forward  = dense_forward;
+            slot->backward = dense_backward;
+            slot->update   = dense_update;
+            layer_built = 0;
+        }
+
+        case FFNN_CONVOLUTIONAL:
+        case FFNN_MAXPOOL:
+        case FFNN_BATCHNORM:
+        case FFNN_SOFTMAX:
+        case FFNN_BLANK:
+        default:
+            slot->type       = type;
+            slot->activation = activation;
+            slot->inputs     = inputs;
+            slot->outputs    = outputs;
+            slot->batch      = batch;
+            layer_built = 0;
+    }
+
+    if (layer_built != 0) {
         free(slot->output);         slot->output = NULL;
         free(slot->pre_act);        slot->pre_act = NULL;
         free(slot->delta);          slot->delta = NULL;

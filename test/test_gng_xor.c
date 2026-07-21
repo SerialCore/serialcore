@@ -53,7 +53,7 @@ static int check(int passed, const char *msg)
 static void snapshot(sonn_t *s, int *interior, float *total_err,
                      int *edges, float *mean_dist)
 {
-    int   inter = sonn_interior_neurons(s);
+    int   inter = s->current_neurons - s->in_count - s->out_count;
     float err   = 0.0f;
     int   ed    = 0;
     float dist  = 0.0f;
@@ -98,7 +98,7 @@ int main(void)
     const int max_neurons = 256;
     const int max_degree = 64;
 
-    sonn_t *s = sonn_create(input_dim, output_dim, max_neurons, max_degree);
+    sonn_t *s = sonn_create(input_dim, output_dim, max_neurons, max_degree, GELU);
     int failed = 0;
     failed += check(s != NULL, "sonn_create succeeded");
 
@@ -110,7 +110,7 @@ int main(void)
     failed += check(out_start == 2 && out_count == 1, "output anchor = 1 at slot 2");
 
     /* 2. After creation, only the anchors are alive — no interior neurons. */
-    int interior_before = sonn_interior_neurons(s);
+    int interior_before = s->current_neurons - s->in_count - s->out_count;
     failed += check(interior_before == 0, "no interior neurons at start");
 
     /* 3. Feed the corners to the network and let it grow. Tighten the growth
@@ -138,12 +138,12 @@ int main(void)
             snapshot(s, &inter, &terr, &ed, &mdist);
             printf("epoch %4d  interior=%-3d total=%-3d edges=%-3d "
                    "mean_bmu_dist=%.6f  total_err=%.6f\n",
-                   e, inter, sonn_current_neurons(s), ed, mdist, terr);
+                   e, inter, s->current_neurons, ed, mdist, terr);
         }
     }
 
-    int interior_after = sonn_interior_neurons(s);
-    int total_after    = sonn_current_neurons(s);
+    int interior_after = s->current_neurons - s->in_count - s->out_count;
+    int total_after    = s->current_neurons;
 
     failed += check(interior_after > 0,
                     "interior neurons were grown by gng_observe()");

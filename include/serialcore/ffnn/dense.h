@@ -30,8 +30,8 @@
  *             C=net->delta [batch*inputs])
  */
 
-/* Dense layer vtable entries. Exposed because ffnn_make_layer wires
- * them into the freshly-built ffnn_layer_t. */
+/* Dense layer vtable entries. 
+ * Exposed because ffnn_make_layer wires them into the freshly-built ffnn_layer_t. */
 void dense_forward(ffnn_layer_t *l, ffnn_network_t *net);
 void dense_backward(ffnn_layer_t *l, ffnn_network_t *net);
 void dense_update(ffnn_layer_t *l, float lr, float momentum, float decay, int batch);

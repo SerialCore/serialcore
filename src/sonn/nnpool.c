@@ -4,37 +4,13 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-/*
- * SONN Pool implementation — pure memory management.
- *
- * Strict constraints:
- *   - At creation time, "fill" the entire memory pool (one-time full allocation).
- *   - Use free_list for O(1) slot acquire/release (no scans).
- *   - Maintain capacity (used_neurons, free_count).
- *   - Provide direct access to raw storage and the most basic storage queries.
- *
- * Pool **does not contain**:
- *   - Neuron add/remove operations (those belong to the Network layer with semantics)
- *   - Activation functions, active state, edge rules, etc.
- */
-
 #include <serialcore/sonn/nnpool.h>
 #include <serialcore/math/xoshiross.h>
 
 #include <stdlib.h>
 #include <stdint.h>
 
-/*
- * He-initialize the parameter arena.
- *
- *   weights[o*inputs + i] ~ scale * uniform(-1, 1),   scale = sqrt(2/inputs)
- *   biases[o]             = 0
- *
- * The generator must have been seeded via xoshiro_seed() before this is
- * called. This mirrors the per-layer init that used to live in
- * ffnn_build_layer (see ffnn.c), but here it iterates the whole arena in a
- * single pass — exactly like nnpool's generate_random_parameter.
- */
+/* He-initialize the parameter arena */
 static void generate_random_parameter(nnpool_t *p)
 {
     int max_neurons = p->max_neurons;
@@ -42,17 +18,13 @@ static void generate_random_parameter(nnpool_t *p)
 
     for (int i = 0; i < max_neurons; i++) {
         float *slot = p->params + i * (input_dim + 1);
+        slot[0] = 0.0f;
 
-        /* bias - small random value in ~[-0.01, 0.01] */
-        uint64_t r = next();
-        float f = (r >> 11) * (1.0f / 9007199254740992.0f);
-        slot[0] = (f * 2.0f - 1.0f) * 0.01f;
-
-        /* weights - random values in ~[-0.1, 0.1] */
+        float scale = sqrtf(2.0f / (float)input_dim);
         for (int w = 0; w < input_dim; w++) {
-            r = next();
-            f = (r >> 11) * (1.0f / 9007199254740992.0f);
-            slot[w + 1] = (f * 2.0f - 1.0f) * 0.1f;
+            uint64_t r = next();
+            float f = (r >> 11) * (1.0f / 9007199254740992.0f);
+            slot[w + 1] = (f * 2.0f - 1.0f) * scale;
         }
     }
 }
