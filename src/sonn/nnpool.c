@@ -32,7 +32,6 @@ static void generate_random_parameter(nnpool_t *p)
 nnpool_t* nnpool_create(int max_neurons, int input_dim, int max_degree)
 {
     if (max_neurons <= 0) return NULL;
-    if (max_degree <= 0) max_degree = SONN_DEFAULT_MAX_DEGREE;
 
     nnpool_t *p = (nnpool_t*)calloc(1, sizeof(nnpool_t));
     if (!p) return NULL;
@@ -87,6 +86,20 @@ int nnpool_acquire_slot(nnpool_t *p)
     int slot = p->free_list[--p->free_count];
     p->used_neurons++;
     return slot;
+}
+
+int nnpool_claim_slot(nnpool_t *p, int id)
+{
+    if (!p || id < 0 || id >= p->max_neurons) return -1;
+
+    for (int i = 0; i < p->free_count; i++) {
+        if (p->free_list[i] == id) {
+            p->free_list[i] = p->free_list[--p->free_count];
+            p->used_neurons++;
+            return id;
+        }
+    }
+    return -1;
 }
 
 void nnpool_release_slot(nnpool_t *p, int id)

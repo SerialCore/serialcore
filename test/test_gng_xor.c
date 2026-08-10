@@ -5,23 +5,8 @@
  */
 
 /*
- * Unit test: SONN auto-growth on the 2-D XOR input space.
- *
- * The SONN plumbing no longer contains any algorithm — Growing Neural Gas was
- * split out to src/sonn/gng.c (see <serialcore/sonn/gng.h>). Here we exercise
- * what the GNG layer is intrinsically good at: feed it the four 2-D points of
- * the XOR corners, let gng_observe() add interior neurons on its own, and
- * assert that:
- *
- *   1. The input/output anchors are pre-allocated exactly as requested by
- *      sonn_create(input_dim, output_dim, ...).
- *   2. After observing the corners, the network has grown interior neurons
- *      (sonn_interior_neurons() > 0).
- *   3. Bounding any single sample worked: sonn_find_bmu returns a valid id
- *      interior to the network.
- *
- * This is *not* a "did the network learn XOR" test; that belongs to the FFNN
- * runtime. This test is for the SONN's structural dynamics alone.
+ * Unit test: SONN auto-growth on the 2-D XOR input space, then save as
+ * meta JSON + binary params, reload, and re-run BMU queries.
  */
 
 #include <serialcore/sonn/sonn.h>
@@ -32,10 +17,9 @@
 #include <stdlib.h>
 #include <math.h>
 
-/* The four corners of the 2-D unit square — the standard XOR input set.
- * For pure self-organizing growth we feed them as unlabeled signals.
- */
 static const float X[4][2] = {{0,0},{0,1},{1,0},{1,1}};
+static const char *META_PATH = "build/test_gng_xor_model.json";
+static const char *BIN_PATH  = "build/test_gng_xor_model.bin";
 
 static int check(int passed, const char *msg)
 {
@@ -43,13 +27,6 @@ static int check(int passed, const char *msg)
     return passed ? 0 : 1;
 }
 
-/* Aggregate growth / quantization metrics for a snapshot.
- *   interior  : number of grown interior neurons
- *   total_err : sum of n->error over all interior neurons
- *   edges     : number of active bidirectional edges (counted once)
- *   mean_dist : mean squared Euclidean distance from each XOR corner to its
- *               BMU (quantization error — the SO analog of MSE).
- */
 static void snapshot(sonn_t *s, int *interior, float *total_err,
                      int *edges, float *mean_dist)
 {
@@ -67,7 +44,6 @@ static void snapshot(sonn_t *s, int *interior, float *total_err,
         if (!sonn_is_interior(s, i)) continue;
         err += n->error;
 
-        /* count each undirected active edge once (only when to > i) */
         edge_t *row = nnpool_edge_row(s->pool, i);
         for (int j = 0; j < md; j++) {
             if (row[j].active && row[j].to > i) ed++;
@@ -87,12 +63,8 @@ static void snapshot(sonn_t *s, int *interior, float *total_err,
 
 int main(void)
 {
-    /* sonn_observe() touches the prototype-block RNG only indirectly via the
-     * pool init; still, seed deterministically for reproducible growth. */
     xoshiro_seed(0xC0FFEEULL);
 
-    /* Treat XOR as a (2)->(1) shape: 2 input anchors, 1 output anchor.
-     * Allow plenty of growth headroom (max_neurons=256). */
     const int input_dim  = 2;
     const int output_dim = 1;
     const int max_neurons = 256;
@@ -102,33 +74,24 @@ int main(void)
     int failed = 0;
     failed += check(s != NULL, "sonn_create succeeded");
 
-    /* 1. Anchor ranges are exactly input_dim / output_dim. */
     int in_start = -1, in_count = -1, out_start = -1, out_count = -1;
     sonn_get_input_range(s, &in_start, &in_count);
     sonn_get_output_range(s, &out_start, &out_count);
     failed += check(in_start == 0 && in_count == 2, "input anchors = 2 at slots 0,1");
     failed += check(out_start == 2 && out_count == 1, "output anchor = 1 at slot 2");
 
-    /* 2. After creation, only the anchors are alive — no interior neurons. */
     int interior_before = s->current_neurons - s->in_count - s->out_count;
     failed += check(interior_before == 0, "no interior neurons at start");
 
-    /* 3. Feed the corners to the network and let it grow. Tighten the growth
-     *    cadence so the test takes very few observations to demonstrate growth.
-     *    Insert a new neuron every 8 observations. The GNG owns the policy
-     *    knobs that the generic SONN no longer knows about. */
     gng_t *gng = gng_create(s, /*insert_interval=*/8,
                             /*max_age=*/30.0f,
                             /*error_decay=*/0.95f);
     failed += check(gng != NULL, "gng_create succeeded");
 
-    const int epochs        = 40;     /* = 40*4 = 160 observations */
+    const int epochs        = 40;
     const float eps_bmu     = 0.15f;
     const float eps_n       = 0.05f;
 
-    /* Pure self-organization: y == NULL means no supervised pull on the
-     * output anchor. The SONN learns the *structure* of the input space,
-     * not the XOR mapping (mapping is the FFNN's job). */
     for (int e = 0; e < epochs; e++) {
         for (int i = 0; i < 4; i++) {
             gng_observe(gng, X[i], NULL, eps_bmu, eps_n, 0.0f);
@@ -144,33 +107,67 @@ int main(void)
 
     int interior_after = s->current_neurons - s->in_count - s->out_count;
     int total_after    = s->current_neurons;
+    int edges_after = 0;
+    float mean_dist_after = 0.0f;
+    snapshot(s, NULL, NULL, &edges_after, &mean_dist_after);
 
     failed += check(interior_after > 0,
                     "interior neurons were grown by gng_observe()");
     failed += check(total_after == in_count + out_count + interior_after,
                     "total = input + output + interior");
 
-    /* 4. Per-pattern final readout: for each XOR corner list the BMU
-     *    (interior neuron id) and squared distance to it. Cluster
-     *    coverage is the SONN's notion of "result". */
+    int saved_bmu[4];
+    float saved_dist[4];
     printf("  final per-pattern coverage:\n");
     for (int i = 0; i < 4; i++) {
-        int bmu = gng_find_bmu(s, X[i]);
-        float d = gng_prototype_distance(s, bmu, X[i]);
+        saved_bmu[i] = gng_find_bmu(s, X[i]);
+        saved_dist[i] = gng_prototype_distance(s, saved_bmu[i], X[i]);
         printf("    X=(%g,%g) -> bmu=%-3d dist=%.6f\n",
-               X[i][0], X[i][1], bmu, d);
+               X[i][0], X[i][1], saved_bmu[i], saved_dist[i]);
     }
 
-    /* 5. BMU selection works end-to-end and returns an interior neuron
-     *    (never one of the fixed input/output anchors). */
     int bmu = gng_find_bmu(s, X[0]);
     failed += check(bmu >= 0, "gng_find_bmu returns valid id");
     int is_in  = (bmu >= in_start  && bmu < in_start  + in_count);
     int is_out = (bmu >= out_start && bmu < out_start + out_count);
     failed += check(!is_in && !is_out, "BMU is an interior neuron");
 
+    /* Save meta JSON + binary params, destroy, reload, re-run BMU. */
+    failed += check(sonn_save(s, META_PATH, BIN_PATH) == 0, "sonn_save");
     gng_destroy(gng);
     sonn_destroy(s);
+    s = NULL;
+    gng = NULL;
+
+    sonn_t *loaded = sonn_load(META_PATH, BIN_PATH);
+    failed += check(loaded != NULL, "sonn_load");
+    if (loaded) {
+        int lin = 0, ledges = 0;
+        float ldist = 0.0f;
+        snapshot(loaded, &lin, NULL, &ledges, &ldist);
+
+        failed += check(loaded->input_dim == input_dim && loaded->output_dim == output_dim,
+                        "loaded dims match");
+        failed += check(lin == interior_after, "loaded interior count matches");
+        failed += check(loaded->current_neurons == total_after, "loaded total neurons match");
+        failed += check(ledges == edges_after, "loaded edge count matches");
+        failed += check(fabsf(ldist - mean_dist_after) < 1e-5f, "loaded mean BMU dist matches");
+
+        printf("  reloaded per-pattern coverage:\n");
+        for (int i = 0; i < 4; i++) {
+            int lbmu = gng_find_bmu(loaded, X[i]);
+            float ld = gng_prototype_distance(loaded, lbmu, X[i]);
+            char buf[96];
+            printf("    X=(%g,%g) -> bmu=%-3d dist=%.6f\n",
+                   X[i][0], X[i][1], lbmu, ld);
+            snprintf(buf, sizeof(buf), "loaded BMU for X[%d] matches", i);
+            failed += check(lbmu == saved_bmu[i], buf);
+            snprintf(buf, sizeof(buf), "loaded dist for X[%d] matches", i);
+            failed += check(fabsf(ld - saved_dist[i]) < 1e-5f, buf);
+        }
+
+        sonn_destroy(loaded);
+    }
 
     if (failed) {
         printf("test_gng_xor: FAIL (%d assertions broken)\n", failed);

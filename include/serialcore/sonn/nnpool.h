@@ -11,9 +11,6 @@
 
 #include <stdlib.h>
 
-/* Default maximum degree */
-#define SONN_DEFAULT_MAX_DEGREE 64
-
 typedef struct nnpool {
     neuron_t *neurons;              /* [max_neurons] */
     float    *params;               /* [max_neurons * (input_dim + 1)] — bias at [0], weights [1..] for each neuron */
@@ -36,6 +33,9 @@ void nnpool_destroy(nnpool_t *p);
 
 /* Claim a raw slot from free list. */
 int nnpool_acquire_slot(nnpool_t *p);
+
+/* Claim a specific free slot (for deserialization). Returns id or -1. */
+int nnpool_claim_slot(nnpool_t *p, int id);
 
 /* Return a raw slot back to the free list. */
 void nnpool_release_slot(nnpool_t *p, int id);

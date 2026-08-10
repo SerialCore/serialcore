@@ -5,7 +5,11 @@
  */
 
 #include <serialcore/sonn/sonn.h>
+#include <serialcore/iobin.h>
+#include <serialcore/iojson.h>
+#include <serialcore/types.h>
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -207,7 +211,7 @@ void sonn_remove_edge(sonn_t *s, int a, int b)
     }
 }
 
-int sonn_is_interior(sonn_t *s, int id)
+int sonn_is_interior(const sonn_t *s, int id)
 {
     if (!s || id < 0) return 0;
     if (id >= s->in_start && id < s->in_start + s->in_count) return 0;
@@ -215,7 +219,7 @@ int sonn_is_interior(sonn_t *s, int id)
     return 1;
 }
 
-int sonn_get_neighbors(sonn_t *s, int id, int *out, int max_out)
+int sonn_get_neighbors(const sonn_t *s, int id, int *out, int max_out)
 {
     if (!s || !s->pool || id < 0 || !out || max_out <= 0) return 0;
     neuron_t *n = nnpool_get_neuron(s->pool, id);
@@ -232,7 +236,7 @@ int sonn_get_neighbors(sonn_t *s, int id, int *out, int max_out)
     return count;
 }
 
-int sonn_get_input_range(sonn_t *s, int *start, int *count)
+int sonn_get_input_range(const sonn_t *s, int *start, int *count)
 {
     if (!s) return -1;
     if (start) *start = s->in_start;
@@ -240,7 +244,7 @@ int sonn_get_input_range(sonn_t *s, int *start, int *count)
     return 0;
 }
 
-int sonn_get_output_range(sonn_t *s, int *start, int *count)
+int sonn_get_output_range(const sonn_t *s, int *start, int *count)
 {
     if (!s) return -1;
     if (start) *start = s->out_start;
@@ -248,7 +252,7 @@ int sonn_get_output_range(sonn_t *s, int *start, int *count)
     return 0;
 }
 
-int sonn_get_output(sonn_t *s, float *out)
+int sonn_get_output(const sonn_t *s, float *out)
 {
     if (!s || !s->pool || !out) return -1;
     for (int i = 0; i < s->out_count; i++) {
@@ -256,4 +260,261 @@ int sonn_get_output(sonn_t *s, float *out)
         out[i] = n ? n->activation : 0.0f;
     }
     return 0;
+}
+
+/* Claim/activate a neuron slot described by meta JSON (id + type only). */
+static int sonn_claim_neuron(sonn_t *s, const cJSON *jn, int expect_existing)
+{
+    int id = 0;
+    const char *type_s = NULL;
+    activaton_t type;
+    neuron_t *n;
+    float *params;
+
+    if (!s || !jn) return -1;
+    if (iojson_get_int(jn, "id", &id) != 0) return -1;
+    if (iojson_get_string(jn, "type", &type_s) != 0) return -1;
+
+    type = activaton_type((char *)type_s);
+    n = nnpool_get_neuron(s->pool, id);
+
+    if (expect_existing) {
+        if (!n || !n->active) return -1;
+        n->type = type;
+        return 0;
+    }
+
+    if (n && n->active) return -1;
+    if (nnpool_claim_slot(s->pool, id) != id) return -1;
+
+    n = nnpool_get_neuron(s->pool, id);
+    params = nnpool_get_params(s->pool, id);
+    {
+        edge_t *erow = nnpool_edge_row(s->pool, id);
+        if (erow) {
+            for (int i = 0; i < s->pool->max_degree; i++) {
+                erow[i].active = 0;
+                erow[i].to = -1;
+            }
+        }
+        s->pool->degrees[id] = 0;
+    }
+    if (n) neuron_activate(n, type, params, s->pool->input_dim);
+    s->current_neurons++;
+    return 0;
+}
+
+int sonn_save(const sonn_t *s, const char *json_path, const char *bin_path)
+{
+    cJSON *root;
+    cJSON *neurons;
+    cJSON *edges;
+    activaton_t default_type = GELU;
+    int md;
+    int nparams;
+    int rc;
+
+    if (!s || !s->pool || !s->pool->params || !json_path || !bin_path) return -1;
+
+    root = cJSON_CreateObject();
+    if (!root) return -1;
+
+    {
+        neuron_t *n0 = nnpool_get_neuron(s->pool, s->in_start);
+        if (n0 && n0->active) default_type = n0->type;
+    }
+
+    cJSON_AddStringToObject(root, "kind", nn_kind_str[NN_KIND_SONN]);
+    cJSON_AddNumberToObject(root, "input_dim", s->input_dim);
+    cJSON_AddNumberToObject(root, "output_dim", s->output_dim);
+    cJSON_AddNumberToObject(root, "max_neurons", s->max_neurons);
+    cJSON_AddNumberToObject(root, "max_degree", s->max_degree);
+    cJSON_AddNumberToObject(root, "in_start", s->in_start);
+    cJSON_AddNumberToObject(root, "in_count", s->in_count);
+    cJSON_AddNumberToObject(root, "out_start", s->out_start);
+    cJSON_AddNumberToObject(root, "out_count", s->out_count);
+    cJSON_AddNumberToObject(root, "current_neurons", s->current_neurons);
+    cJSON_AddStringToObject(root, "activation", activaton_name(default_type));
+
+    neurons = cJSON_CreateArray();
+    edges = cJSON_CreateArray();
+    if (!neurons || !edges) {
+        cJSON_Delete(neurons);
+        cJSON_Delete(edges);
+        cJSON_Delete(root);
+        return -1;
+    }
+    cJSON_AddItemToObject(root, "neurons", neurons);
+    cJSON_AddItemToObject(root, "edges", edges);
+
+    md = s->pool->max_degree;
+    for (int id = 0; id < s->pool->max_neurons; id++) {
+        neuron_t *n = nnpool_get_neuron(s->pool, id);
+        cJSON *jn;
+        edge_t *row;
+
+        if (!n || !n->active) continue;
+
+        jn = cJSON_CreateObject();
+        if (!jn) {
+            cJSON_Delete(root);
+            return -1;
+        }
+        cJSON_AddNumberToObject(jn, "id", id);
+        cJSON_AddStringToObject(jn, "type", activaton_name(n->type));
+        cJSON_AddItemToArray(neurons, jn);
+
+        /* Emit each undirected edge once (to > id). */
+        row = nnpool_edge_row(s->pool, id);
+        if (!row) continue;
+        for (int j = 0; j < md; j++) {
+            cJSON *je;
+            if (!row[j].active || row[j].to <= id) continue;
+            je = cJSON_CreateObject();
+            if (!je) {
+                cJSON_Delete(root);
+                return -1;
+            }
+            cJSON_AddNumberToObject(je, "from", id);
+            cJSON_AddNumberToObject(je, "to", row[j].to);
+            cJSON_AddNumberToObject(je, "age", row[j].age);
+            cJSON_AddItemToArray(edges, je);
+        }
+    }
+
+    rc = iojson_write_cjson(json_path, root);
+    cJSON_Delete(root);
+    if (rc != 0) return -1;
+
+    nparams = s->pool->max_neurons * (s->pool->input_dim + 1);
+    return iobin_write_floats(bin_path, s->pool->params, nparams);
+}
+
+sonn_t *sonn_load(const char *json_path, const char *bin_path)
+{
+    cJSON *root;
+    const char *act_s = NULL;
+    int input_dim = 0, output_dim = 0, max_neurons = 0, max_degree = 0;
+    int in_start = 0, in_count = 0, out_start = 0, out_count = 0;
+    activaton_t default_type = GELU;
+    cJSON *neurons;
+    cJSON *edges;
+    sonn_t *s = NULL;
+    int ok = 1;
+    int n_neurons;
+    int nparams;
+
+    if (!json_path || !bin_path) return NULL;
+
+    root = iojson_parse_file(json_path);
+    if (!root || !cJSON_IsObject(root)) {
+        cJSON_Delete(root);
+        return NULL;
+    }
+
+    if (iojson_get_int(root, "input_dim", &input_dim) != 0 ||
+        iojson_get_int(root, "output_dim", &output_dim) != 0 ||
+        iojson_get_int(root, "max_neurons", &max_neurons) != 0 ||
+        iojson_get_int(root, "max_degree", &max_degree) != 0) {
+        cJSON_Delete(root);
+        return NULL;
+    }
+
+    iojson_get_int(root, "in_start", &in_start);
+    iojson_get_int(root, "in_count", &in_count);
+    iojson_get_int(root, "out_start", &out_start);
+    iojson_get_int(root, "out_count", &out_count);
+
+    if (iojson_get_string(root, "activation", &act_s) == 0) {
+        default_type = activaton_type((char *)act_s);
+    }
+
+    neurons = iojson_get_array(root, "neurons");
+    edges = iojson_get_array(root, "edges");
+    if (!neurons) {
+        cJSON_Delete(root);
+        return NULL;
+    }
+
+    s = sonn_create(input_dim, output_dim, max_neurons, max_degree, default_type);
+    if (!s) {
+        cJSON_Delete(root);
+        return NULL;
+    }
+
+    if (in_count > 0 && (s->in_start != in_start || s->in_count != in_count)) ok = 0;
+    if (ok && out_count > 0 && (s->out_start != out_start || s->out_count != out_count)) ok = 0;
+
+    n_neurons = cJSON_GetArraySize(neurons);
+    for (int i = 0; ok && i < n_neurons; i++) {
+        cJSON *jn = cJSON_GetArrayItem(neurons, i);
+        int id = 0;
+        int is_anchor;
+
+        if (!cJSON_IsObject(jn) || iojson_get_int(jn, "id", &id) != 0) {
+            ok = 0;
+            break;
+        }
+
+        is_anchor = (id >= s->in_start && id < s->in_start + s->in_count) ||
+                    (id >= s->out_start && id < s->out_start + s->out_count);
+
+        if (sonn_claim_neuron(s, jn, is_anchor) != 0) ok = 0;
+    }
+
+    if (ok && edges) {
+        int n_edges = cJSON_GetArraySize(edges);
+        for (int i = 0; ok && i < n_edges; i++) {
+            cJSON *je = cJSON_GetArrayItem(edges, i);
+            int from = 0, to = 0;
+            float age = 0.0f;
+            int eidx;
+            int sa, sb;
+
+            if (!cJSON_IsObject(je) ||
+                iojson_get_int(je, "from", &from) != 0 ||
+                iojson_get_int(je, "to", &to) != 0) {
+                ok = 0;
+                break;
+            }
+            iojson_get_float(je, "age", &age);
+
+            eidx = sonn_add_edge(s, from, to);
+            if (eidx < 0) {
+                ok = 0;
+                break;
+            }
+
+            sa = nnpool_find_edge_slot(s->pool, from, to);
+            sb = nnpool_find_edge_slot(s->pool, to, from);
+            if (sa >= 0) nnpool_edge_row(s->pool, from)[sa].age = age;
+            if (sb >= 0) nnpool_edge_row(s->pool, to)[sb].age = age;
+        }
+    }
+
+    if (ok) {
+        nparams = s->pool->max_neurons * (s->pool->input_dim + 1);
+        if (iobin_read_floats(bin_path, s->pool->params, nparams) != 0) ok = 0;
+    }
+
+    /* n->bias is a cached copy of params[0]; refresh active neurons. */
+    for (int id = 0; ok && id < s->pool->max_neurons; id++) {
+        neuron_t *neu = nnpool_get_neuron(s->pool, id);
+        float *params;
+        if (!neu || !neu->active) continue;
+        params = nnpool_get_params(s->pool, id);
+        if (!params) {
+            ok = 0;
+            break;
+        }
+        neu->bias = params[0];
+        neu->weights = params + 1;
+    }
+
+    cJSON_Delete(root);
+    if (!ok) {
+        sonn_destroy(s);
+        return NULL;
+    }
+    return s;
 }

@@ -40,16 +40,20 @@ int sonn_add_edge(sonn_t *s, int a, int b);
 void sonn_remove_edge(sonn_t *s, int a, int b);
 
 /* Interior neurons are the ones algorithm layers grow and adapt. */
-int sonn_is_interior(sonn_t *s, int id);
+int sonn_is_interior(const sonn_t *s, int id);
 
 /* Queries */
-int sonn_get_neighbors(sonn_t *s, int id, int *out, int max_out);
+int sonn_get_neighbors(const sonn_t *s, int id, int *out, int max_out);
 
 /* Range accessors for the fixed input/output neuron anchors. */
-int sonn_get_input_range(sonn_t *s, int *start, int *count);
-int sonn_get_output_range(sonn_t *s, int *start, int *count);
+int sonn_get_input_range(const sonn_t *s, int *start, int *count);
+int sonn_get_output_range(const sonn_t *s, int *start, int *count);
 
 /* Read out the current activations of the output neurons into `out`. */
-int sonn_get_output(sonn_t *s, float *out);
+int sonn_get_output(const sonn_t *s, float *out);
+
+/* Persist meta JSON (dims, active neurons, edges) + nnpool params binary. */
+int sonn_save(const sonn_t *s, const char *json_path, const char *bin_path);
+sonn_t *sonn_load(const char *json_path, const char *bin_path);
 
 #endif

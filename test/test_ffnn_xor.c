@@ -5,11 +5,8 @@
  */
 
 /*
- * Unit test: XOR trained on the new dense-matrix FFNN core
- * (src/ffnn), used as the canonical smoke test that the darknet-style
- * vtable + GEMM forward/backward/update loop is wired up correctly.
- *
- * Same network shape as the SONN demo: 2-20-20-1, all GELU activations.
+ * Unit test: XOR trained on the dense-matrix FFNN core, then saved as
+ * meta JSON + binary params, reloaded, and re-run for inference.
  */
 
 #include <serialcore/ffnn/ffnn.h>
@@ -23,6 +20,9 @@
 static const float X[4][2] = {{0,0},{0,1},{1,0},{1,1}};
 static const float Y[4]     = { 0 ,  1 ,  1 ,  0  };
 
+static const char *META_PATH = "build/test_ffnn_xor_model.json";
+static const char *BIN_PATH  = "build/test_ffnn_xor_model.bin";
+
 static int check(int passed, const char *msg)
 {
     printf("  [%s] %s\n", passed ? "PASS" : "FAIL", msg);
@@ -31,11 +31,8 @@ static int check(int passed, const char *msg)
 
 int main(void)
 {
-    /* Weight init in ffnn_make_layer consumes the project-wide RNG,
-     * so seed it deterministically before any layer is allocated. */
     xoshiro_seed(0xC0FFEEULL);
 
-    /* Hyperparameters chosen to mirror src/main.c's SONN demo. */
     const int   batch    = 1;
     const float lr       = 0.10f;
     const float momentum = 0.90f;
@@ -43,20 +40,16 @@ int main(void)
     const int   epochs   = 3000;
 
     ffnn_network_t *net = ffnn_create(2, batch, lr, momentum, decay);
-    if (!net) { fprintf(stderr, "ffnn_network_create failed\n"); return 1; }
+    if (!net) { fprintf(stderr, "ffnn_create failed\n"); return 1; }
 
-    /* 2 → 20 → 20 → 1, GELU throughout. */
     if (ffnn_add_layer(net, 2,  20, FFNN_DENSE, GELU) != 0 ||
         ffnn_add_layer(net, 20, 20, FFNN_DENSE, GELU) != 0 ||
         ffnn_add_layer(net, 20, 1,  FFNN_DENSE, GELU) != 0) {
-        fprintf(stderr, "ffnn_network_add_layer failed\n");
+        fprintf(stderr, "ffnn_add_layer failed\n");
         ffnn_destroy(net);
         return 1;
     }
 
-    /* Build the parameter pool — allocates contiguous weight + bias arenas
-     * for all three layers and He-initializes them. The xoshiro generator
-     * was seeded above; mmpool_create draws from it. */
     if (ffnn_compile(net) != 0) {
         fprintf(stderr, "ffnn_compile failed\n");
         ffnn_destroy(net);
@@ -79,12 +72,14 @@ int main(void)
     }
 
     int failed = 0;
+    float trained[4];
 
     failed += check(mse / 4.0f < 0.01f, "final MSE < 0.01");
 
     for (int i = 0; i < 4; i++) {
         float pred[1];
         ffnn_predict(net, X[i], pred);
+        trained[i] = pred[0];
         char buf[64];
         snprintf(buf, sizeof(buf),
                  "XOR(%g,%g) = %.3f (target %g)",
@@ -92,7 +87,28 @@ int main(void)
         failed += check(fabsf(pred[0] - Y[i]) < 0.15f, buf);
     }
 
+    /* Save meta JSON + binary params, destroy, reload, re-run inference. */
+    failed += check(ffnn_save(net, META_PATH, BIN_PATH) == 0, "ffnn_save");
     ffnn_destroy(net);
+    net = NULL;
+
+    ffnn_network_t *loaded = ffnn_load(META_PATH, BIN_PATH);
+    failed += check(loaded != NULL, "ffnn_load");
+    if (loaded) {
+        failed += check(loaded->inputs == 2 && loaded->outputs == 1 && loaded->n == 3,
+                        "loaded geometry 2-20-20-1");
+        for (int i = 0; i < 4; i++) {
+            float pred[1];
+            ffnn_predict(loaded, X[i], pred);
+            char buf[80];
+            snprintf(buf, sizeof(buf),
+                     "loaded XOR(%g,%g) = %.3f (saved %.3f)",
+                     X[i][0], X[i][1], pred[0], trained[i]);
+            failed += check(fabsf(pred[0] - trained[i]) < 1e-5f, buf);
+            failed += check(fabsf(pred[0] - Y[i]) < 0.15f, "loaded still solves XOR");
+        }
+        ffnn_destroy(loaded);
+    }
 
     if (failed) {
         printf("test_ffnn_xor: FAIL (%d assertions broken)\n", failed);

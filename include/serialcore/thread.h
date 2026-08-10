@@ -4,8 +4,8 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-#ifndef SERIALCORE_TOOL_THREAD
-#define SERIALCORE_TOOL_THREAD
+#ifndef SERIALCORE_THREAD
+#define SERIALCORE_THREAD
 
 #include <unistd.h>
 #include <pthread.h>

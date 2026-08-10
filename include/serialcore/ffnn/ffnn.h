@@ -7,19 +7,11 @@
 #ifndef SERIALCORE_FFNN_FFNN
 #define SERIALCORE_FFNN_FFNN
 
+#include <serialcore/types.h>
 #include <serialcore/sonn/activaton.h>
 #include <serialcore/ffnn/mmpool.h>
 
 /* FFNN — feedforward, dense-matrix, fixed-topology neural network core. */
-
-typedef enum layertype {
-    FFNN_BLANK,
-    FFNN_DENSE,
-    FFNN_CONVOLUTIONAL,
-    FFNN_MAXPOOL,
-    FFNN_BATCHNORM,
-    FFNN_SOFTMAX
-} layertype_t;
 
 struct ffnn_layer;
 struct ffnn_network;
@@ -30,7 +22,7 @@ typedef void (*ffnn_backward_fn)(ffnn_layer_t *l, ffnn_network_t *net);
 typedef void (*ffnn_update_fn)(ffnn_layer_t *l, float lr, float momentum, float decay, int batch);
 
 struct ffnn_layer {
-    layertype_t type;
+    layer_type_t type;
     activaton_t activation;
 
     int inputs;              /* the size of the 1-D vector the previous layer emits */
@@ -83,7 +75,7 @@ ffnn_network_t* ffnn_create(int inputs, int batch, float learning_rate, float mo
 void ffnn_destroy(ffnn_network_t *net);
 
 /* Append a new layer to the network. */
-int ffnn_add_layer(ffnn_network_t *net, int inputs, int outputs, layertype_t type, activaton_t activation);
+int ffnn_add_layer(ffnn_network_t *net, int inputs, int outputs, layer_type_t type, activaton_t activation);
 
 /* Build net->pool from the layers added so far and wire each layer's parameters into the pool's contiguous arenas. 
  * He-init (formerly done in ffnn_build_layer) runs here. 
@@ -104,5 +96,9 @@ void ffnn_train_step(ffnn_network_t *net, const float *input, const float *targe
 
 /* Forward-only convenience; `output` must have net->outputs floats. */
 void ffnn_predict(ffnn_network_t *net, const float *input, float *output);
+
+/* Persist meta JSON (topology + hyperparams) + mmpool params binary. */
+int ffnn_save(const ffnn_network_t *net, const char *json_path, const char *bin_path);
+ffnn_network_t *ffnn_load(const char *json_path, const char *bin_path);
 
 #endif

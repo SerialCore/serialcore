@@ -8,6 +8,9 @@
 #include <serialcore/ffnn/dense.h>
 #include <serialcore/ffnn/gemm.h>
 #include <serialcore/ffnn/mmpool.h>
+#include <serialcore/iobin.h>
+#include <serialcore/iojson.h>
+#include <serialcore/types.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -58,7 +61,7 @@ void ffnn_destroy(ffnn_network_t *net)
     free(net);
 }
 
-int ffnn_add_layer(ffnn_network_t *net, int inputs, int outputs, layertype_t type, activaton_t activation)
+int ffnn_add_layer(ffnn_network_t *net, int inputs, int outputs, layer_type_t type, activaton_t activation)
 {
     if (!net) return -1;
 
@@ -108,12 +111,13 @@ int ffnn_add_layer(ffnn_network_t *net, int inputs, int outputs, layertype_t typ
 
             if (!slot->output || !slot->pre_act || !slot->delta || !slot->input_snapshot) {
                 layer_built = -1;     /* ffnn_destroy will free what was allocated */
+            } else {
+                slot->forward  = dense_forward;
+                slot->backward = dense_backward;
+                slot->update   = dense_update;
+                layer_built = 0;
             }
-
-            slot->forward  = dense_forward;
-            slot->backward = dense_backward;
-            slot->update   = dense_update;
-            layer_built = 0;
+            break;
         }
 
         case FFNN_CONVOLUTIONAL:
@@ -286,4 +290,141 @@ void ffnn_predict(ffnn_network_t *net, const float *input, float *output)
     net->train = 0;             /* don't cache snapshots for inference */
     ffnn_forward(net, input, output);
     net->train = saved_train;
+}
+
+int ffnn_save(const ffnn_network_t *net, const char *json_path, const char *bin_path)
+{
+    cJSON *root;
+    cJSON *layers;
+    int rc;
+
+    if (!net || !net->compiled || !net->pool || !net->pool->params ||
+        !json_path || !bin_path) {
+        return -1;
+    }
+
+    root = cJSON_CreateObject();
+    if (!root) return -1;
+
+    cJSON_AddStringToObject(root, "kind", nn_kind_str[NN_KIND_FFNN]);
+    cJSON_AddNumberToObject(root, "inputs", net->inputs);
+    cJSON_AddNumberToObject(root, "outputs", net->outputs);
+    cJSON_AddNumberToObject(root, "batch", net->batch);
+    cJSON_AddNumberToObject(root, "learning_rate", net->learning_rate);
+    cJSON_AddNumberToObject(root, "momentum", net->momentum);
+    cJSON_AddNumberToObject(root, "decay", net->decay);
+    cJSON_AddNumberToObject(root, "param_count", net->pool->param_count);
+
+    layers = cJSON_CreateArray();
+    if (!layers) {
+        cJSON_Delete(root);
+        return -1;
+    }
+    cJSON_AddItemToObject(root, "layers", layers);
+
+    for (int i = 0; i < net->n; i++) {
+        const ffnn_layer_t *l = &net->layers[i];
+        cJSON *layer = cJSON_CreateObject();
+
+        if (!layer) {
+            cJSON_Delete(root);
+            return -1;
+        }
+
+        cJSON_AddStringToObject(layer, "type", layer_type_str[l->type]);
+        cJSON_AddStringToObject(layer, "activation", activaton_name(l->activation));
+        cJSON_AddNumberToObject(layer, "inputs", l->inputs);
+        cJSON_AddNumberToObject(layer, "outputs", l->outputs);
+        cJSON_AddItemToArray(layers, layer);
+    }
+
+    rc = iojson_write_cjson(json_path, root);
+    cJSON_Delete(root);
+    if (rc != 0) return -1;
+
+    return iobin_write_floats(bin_path, net->pool->params, net->pool->param_count);
+}
+
+ffnn_network_t *ffnn_load(const char *json_path, const char *bin_path)
+{
+    cJSON *root;
+    int inputs = 0, outputs = 0, batch = 0;
+    float lr = 0.0f, momentum = 0.0f, decay = 0.0f;
+    cJSON *layers;
+    int n_layers;
+    ffnn_network_t *net = NULL;
+    int ok = 1;
+
+    if (!json_path || !bin_path) return NULL;
+
+    root = iojson_parse_file(json_path);
+    if (!root || !cJSON_IsObject(root)) {
+        cJSON_Delete(root);
+        return NULL;
+    }
+
+    if (iojson_get_int(root, "inputs", &inputs) != 0 ||
+        iojson_get_int(root, "outputs", &outputs) != 0 ||
+        iojson_get_int(root, "batch", &batch) != 0 ||
+        iojson_get_float(root, "learning_rate", &lr) != 0 ||
+        iojson_get_float(root, "momentum", &momentum) != 0 ||
+        iojson_get_float(root, "decay", &decay) != 0) {
+        cJSON_Delete(root);
+        return NULL;
+    }
+
+    layers = iojson_get_array(root, "layers");
+    if (!layers) {
+        cJSON_Delete(root);
+        return NULL;
+    }
+    n_layers = cJSON_GetArraySize(layers);
+    if (n_layers <= 0) {
+        cJSON_Delete(root);
+        return NULL;
+    }
+
+    net = ffnn_create(inputs, batch, lr, momentum, decay);
+    if (!net) {
+        cJSON_Delete(root);
+        return NULL;
+    }
+
+    for (int i = 0; ok && i < n_layers; i++) {
+        cJSON *layer = cJSON_GetArrayItem(layers, i);
+        const char *type_s = NULL;
+        const char *act_s = NULL;
+        int lin = 0, lout = 0;
+        layer_type_t type = FFNN_BLANK;
+        activaton_t act;
+
+        if (!cJSON_IsObject(layer) ||
+            iojson_get_string(layer, "type", &type_s) != 0 ||
+            iojson_get_string(layer, "activation", &act_s) != 0 ||
+            iojson_get_int(layer, "inputs", &lin) != 0 ||
+            iojson_get_int(layer, "outputs", &lout) != 0) {
+            ok = 0;
+            break;
+        }
+
+        for (int t = 0; t < 6; t++) {
+            if (strcmp(layer_type_str[t], type_s) == 0) {
+                type = (layer_type_t)t;
+                break;
+            }
+        }
+        act = activaton_type((char *)act_s);
+        if (ffnn_add_layer(net, lin, lout, type, act) != 0) ok = 0;
+    }
+
+    if (ok && net->outputs != outputs) ok = 0;
+    if (ok && ffnn_compile(net) != 0) ok = 0;
+    if (ok && iobin_read_floats(bin_path, net->pool->params, net->pool->param_count) != 0) ok = 0;
+
+    cJSON_Delete(root);
+    if (!ok) {
+        ffnn_destroy(net);
+        return NULL;
+    }
+    return net;
 }

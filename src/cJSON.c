@@ -56,7 +56,7 @@
 #pragma GCC visibility pop
 #endif
 
-#include <serialcore/tool/cJSON.h>
+#include <serialcore/cJSON.h>
 
 /* define our own boolean type */
 #ifdef true

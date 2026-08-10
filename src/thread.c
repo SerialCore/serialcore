@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-#include <serialcore/tool/thread.h>
+#include <serialcore/thread.h>
 
 #include <stdlib.h>
 #include <unistd.h>
