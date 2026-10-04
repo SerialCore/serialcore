@@ -8,6 +8,7 @@ BIN_DIR = $(BUILD_DIR)bin/
 INC_DIR = include/
 SRC_DIR = src/
 MATH_DIR = $(SRC_DIR)math/
+TENSOR_DIR = $(SRC_DIR)tensor/
 SONN_DIR = $(SRC_DIR)sonn/
 FFNN_DIR = $(SRC_DIR)ffnn/
 TEST_DIR = test/
@@ -19,7 +20,7 @@ CFLAGS = -O2 -Wall -Wno-unknown-pragmas -Wfatal-errors -fPIC -Ofast
 CPPFLAGS = $(CFLAGS)
 LDFLAGS = -lm -pthread
 
-C_SOURCES = $(wildcard $(SRC_DIR)*.c $(MATH_DIR)*.c $(SONN_DIR)*.c $(FFNN_DIR)*.c)
+C_SOURCES = $(wildcard $(SRC_DIR)*.c $(MATH_DIR)*.c $(TENSOR_DIR)*.c $(SONN_DIR)*.c $(FFNN_DIR)*.c)
 
 OBJECTS = $(patsubst %.c,$(OBJ_DIR)%.o,$(C_SOURCES)) \
           $(patsubst %.cc,$(OBJ_DIR)%.o,$(CPP_SOURCES)) \
