@@ -4,12 +4,12 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-#ifndef SERIALCORE_SONN_ACTIVATON
-#define SERIALCORE_SONN_ACTIVATON
+#ifndef SERIALCORE_MATH_ACTIVATON
+#define SERIALCORE_MATH_ACTIVATON
 
 #include <math.h>
 
-/* Supported activation function types. */
+/* Supported activation function types. Shared by FFNN and SONN. */
 typedef enum activaton {
     Sigmoid,
     Tanh,
@@ -20,6 +20,7 @@ typedef enum activaton {
     Swish,
     Sin,
     Cos,
+    Identity,
 } activaton_t;
 
 /* Compute the activation output for input x using the activation type. */
@@ -31,7 +32,8 @@ float gradient_func(float x, activaton_t a);
 /* Return a string name for the given activation type. */
 char *activaton_name(activaton_t a);
 
-/* Convert a string name to the corresponding activation type. */
+/* Convert a string name to the corresponding activation type.
+ * An unrecognized name returns GELU; compare with activaton_name to detect that. */
 activaton_t activaton_type(char *s);
 
 /* Sigmoid activation and its gradient. */
@@ -122,6 +124,17 @@ static inline float af_Cos(float x)
 static inline float gf_Cos(float x)
 {
     return -sin(x);
+}
+
+/* Identity activation and its gradient. */
+static inline float af_Identity(float x)
+{
+    return x;
+}
+static inline float gf_Identity(float x)
+{
+    (void)x;
+    return 1.0f;
 }
 
 #endif

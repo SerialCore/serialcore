@@ -8,7 +8,7 @@
 #define SERIALCORE_SONN_SONN
 
 #include <serialcore/cJSON.h>
-#include <serialcore/sonn/activaton.h>
+#include <serialcore/math/activaton.h>
 #include <serialcore/sonn/nnpool.h>
 
 #define SONN_DEFAULT_MAX_DEGREE 64

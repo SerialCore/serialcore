@@ -7,97 +7,100 @@
 #ifndef SERIALCORE_FFNN_FFNN
 #define SERIALCORE_FFNN_FFNN
 
-#include <serialcore/types.h>
-#include <serialcore/sonn/activaton.h>
+#include <serialcore/math/activaton.h>
+#include <serialcore/cJSON.h>
 #include <serialcore/ffnn/mmpool.h>
+#include <serialcore/types.h>
 
-/* FFNN — feedforward, dense-matrix, fixed-topology neural network core. */
+/* FFNN — sequential feedforward network. Each layer is an ops table plus
+ * private state. The driver only chains output and delta along the stack. */
 
 struct ffnn_layer;
 struct ffnn_network;
 typedef struct ffnn_layer ffnn_layer_t;
 typedef struct ffnn_network ffnn_network_t;
-typedef void (*ffnn_forward_fn)(ffnn_layer_t *l, ffnn_network_t *net);
-typedef void (*ffnn_backward_fn)(ffnn_layer_t *l, ffnn_network_t *net);
-typedef void (*ffnn_update_fn)(ffnn_layer_t *l, float lr, float momentum, float decay, int batch);
+
+typedef struct ffnn_layer_ops {
+    layer_type_t type;
+    int  (*shape)(const ffnn_layer_t *l);
+    int  (*count_params)(const ffnn_layer_t *l);
+    int  (*bind)(ffnn_layer_t *l, float *params, float *grads);
+    void (*init)(ffnn_layer_t *l);
+    int  (*forward)(ffnn_layer_t *l, ffnn_network_t *net);
+    int  (*backward)(ffnn_layer_t *l, ffnn_network_t *net);
+    void (*update)(ffnn_layer_t *l, float lr, float momentum, float decay, int batch);
+    float *(*output)(ffnn_layer_t *l);
+    float *(*delta)(ffnn_layer_t *l);
+    cJSON *(*save_extra)(const ffnn_layer_t *l);
+    int  (*load_extra)(ffnn_layer_t *l, const cJSON *extra);
+    void (*release)(ffnn_layer_t *l);
+} ffnn_layer_ops_t;
 
 struct ffnn_layer {
+    const ffnn_layer_ops_t *ops;
+    void                   *state;
+
     layer_type_t type;
-    activaton_t activation;
-
-    int inputs;              /* the size of the 1-D vector the previous layer emits */
-    int outputs;             /* the size this layer emits. */
-    int batch;
-
-    /* Parameters (host memory). Row-major: weights[o*inputs + i]. */
-    float *weights;          /* [outputs * inputs] */
-    float *biases;           /* [outputs] */
-    float *weight_updates;   /* [outputs * inputs] */
-    float *bias_updates;     /* [outputs] */
-
-    float *output;           /* [batch * outputs] */
-    float *pre_act;          /* [batch * outputs] — z before activation */
-    float *delta;            /* [batch * outputs] */
-    float *input_snapshot;   /* [batch * inputs] */
-
-    /* Hook table. May be NULL for layers without learnable params (pool). */
-    ffnn_forward_fn forward;
-    ffnn_backward_fn backward;
-    ffnn_update_fn update;
+    activaton_t  activation;
+    int          inputs;
+    int          outputs;
+    int          batch;
 };
 
+/* Writes the loss gradient into delta[0 .. n). MSE stores (target - output). */
+typedef void (*ffnn_loss_fn)(const float *output, const float *target, float *delta, int n, void *userdata);
+
 struct ffnn_network {
-    int           n;              /* number of layers in `layers` */
-    int           cap;            /* allocated slots in `layers` */
+    int           n;
+    int           cap;
     ffnn_layer_t *layers;
 
-    int           inputs;         /* network input size == layer[0].inputs */
-    int           outputs;        /* network output size == layer[n-1].outputs */
-    int           batch;          /* SGD batch size (1 for the unit tests) */
+    int           inputs;
+    int           outputs;
+    int           batch;
 
     float         learning_rate;
     float         momentum;
     float         decay;
 
-    float        *input;          /* the input to the current layer during forward, and the output of the previous layer. */
-    float        *input_buffer;   /* each forward resets `net->input` to `input_buffer` so the caller's data has a stable home to land in */
+    float        *input;
+    float        *input_buffer;
     float        *delta;
 
-    int           train;          /* 1 → forward also caches inputs for backward */
-    int           index;          /* current layer index during forward/backward */
-    int           compiled;       /* 1 → ffnn_compile() has built net->pool and wired per-layer weight/bias views into it */
+    int           train;          /* 1 → layers cache inputs for backward */
+    int           index;
+    int           compiled;
+
+    ffnn_loss_fn  loss;
+    void         *loss_data;
 
     mmpool_t     *pool;
 };
 
-/* Lifecycle */
-ffnn_network_t* ffnn_create(int inputs, int batch, float learning_rate, float momentum, float decay);
+ffnn_network_t *ffnn_create(int inputs, int batch, float learning_rate, float momentum, float decay);
 void ffnn_destroy(ffnn_network_t *net);
 
-/* Append a new layer to the network. */
+/* Rejects types that have no ops table, and any call after ffnn_compile. */
 int ffnn_add_layer(ffnn_network_t *net, int inputs, int outputs, layer_type_t type, activaton_t activation);
 
-/* Build net->pool from the layers added so far and wire each layer's parameters into the pool's contiguous arenas. 
- * He-init (formerly done in ffnn_build_layer) runs here. 
- * Must be called exactly once after the last ffnn_add_layer; calling it again is a no-op. */
+/* Build the parameter pool from each layer's count_params(), bind, then init.
+ * A second call is a no-op. Fails if any layer has no forward. */
 int ffnn_compile(ffnn_network_t *net);
 
-/* Top-level passes. */
-void ffnn_forward(ffnn_network_t *net, const float *input, float *output);
+/* NULL restores mean squared error. */
+void ffnn_set_loss(ffnn_network_t *net, ffnn_loss_fn fn, void *userdata);
+void ffnn_loss_mse(const float *output, const float *target, float *delta, int n, void *userdata);
 
-/* Backprop inverse-pass: computes per-layer deltas and accumulates weight/bias updates. */
-void ffnn_backward(ffnn_network_t *net, const float *target);
+/* Momentum SGD. weight_decay != 0 subtracts decay * param inside the step.
+ * upd is then multiplied by momentum. */
+void ffnn_sgd_step(float *param, float *upd, int n, float lr, float momentum, float decay, int batch, int weight_decay);
 
-/* Apply accumulated updates via SGD + momentum + (L2) decay. */
-void ffnn_update(ffnn_network_t *net);
+int ffnn_forward(ffnn_network_t *net, const float *input, float *output);
+int ffnn_backward(ffnn_network_t *net, const float *target);
+int ffnn_update(ffnn_network_t *net);
+int ffnn_train_step(ffnn_network_t *net, const float *input, const float *target);
+int ffnn_predict(ffnn_network_t *net, const float *input, float *output);
 
-/* Convenience: forward + backward + update in one shot. */
-void ffnn_train_step(ffnn_network_t *net, const float *input, const float *target);
-
-/* Forward-only convenience; `output` must have net->outputs floats. */
-void ffnn_predict(ffnn_network_t *net, const float *input, float *output);
-
-/* Persist meta JSON (topology + hyperparams) + mmpool params binary. */
 int ffnn_save(const ffnn_network_t *net, const char *json_path, const char *bin_path);
 ffnn_network_t *ffnn_load(const char *json_path, const char *bin_path);
 

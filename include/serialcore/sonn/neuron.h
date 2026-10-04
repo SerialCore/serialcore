@@ -7,7 +7,7 @@
 #ifndef SERIALCORE_SONN_NEURON
 #define SERIALCORE_SONN_NEURON
 
-#include <serialcore/sonn/activaton.h>
+#include <serialcore/math/activaton.h>
 
 /* Featured input dimensions. Powers of 2 are preferred for cache alignment. */
 #define SONN_INPUTDIM_64    64

@@ -7,7 +7,7 @@
 #ifndef SERIALCORE_FFNN_GEMM
 #define SERIALCORE_FFNN_GEMM
 
-#include <serialcore/sonn/activaton.h>
+#include <serialcore/math/activaton.h>
 
 /*
  * FFNN GEMM + tiny BLAS helpers.
@@ -50,7 +50,7 @@ void gemm_backward_bias(float *bias_updates, const float *delta, int batch, int 
 void gemm_activate_array (float *x, int n, activaton_t a);
 /* Multiply delta[i] by activaton'(x[i]) in place. Darknet uses the
  * post-activation output (x here) for the gradient argument because the
- * inlined derivatives in <serialcore/sonn/activaton.h> are written to
+ * inlined derivatives in <serialcore/math/activaton.h> are written to
  * accept the pre-activation sum; for the activation set serialcore
  * supports today this distinction is well-defined (see the static inline
  * gf_* functions). */

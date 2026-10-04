@@ -4,9 +4,8 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-#include <serialcore/sonn/activaton.h>
+#include <serialcore/math/activaton.h>
 
-#include <stdio.h>
 #include <string.h>
 
 float activaton_func(float x, activaton_t a)
@@ -30,6 +29,8 @@ float activaton_func(float x, activaton_t a)
             return af_Sin(x);
         case Cos:
             return af_Cos(x);
+        case Identity:
+            return af_Identity(x);
 
         default:
             return af_GELU(x);
@@ -57,6 +58,8 @@ float gradient_func(float x, activaton_t a)
             return gf_Sin(x);
         case Cos:
             return gf_Cos(x);
+        case Identity:
+            return gf_Identity(x);
 
         default:
             return gf_GELU(x);
@@ -84,6 +87,8 @@ char *activaton_name(activaton_t a)
             return "Sin";
         case Cos:
             return "Cos";
+        case Identity:
+            return "Identity";
 
         default:
             return "GELU";
@@ -92,6 +97,7 @@ char *activaton_name(activaton_t a)
 
 activaton_t activaton_type(char *s)
 {
+    if (!s) return GELU;
     if (strcmp(s, "Sigmoid") == 0) return Sigmoid;
     if (strcmp(s, "Tanh") == 0) return Tanh;
     if (strcmp(s, "ReLU") == 0) return ReLU;
@@ -101,6 +107,7 @@ activaton_t activaton_type(char *s)
     if (strcmp(s, "Swish") == 0) return Swish;
     if (strcmp(s, "Sin") == 0) return Sin;
     if (strcmp(s, "Cos") == 0) return Cos;
+    if (strcmp(s, "Identity") == 0) return Identity;
 
     return GELU;
 }
