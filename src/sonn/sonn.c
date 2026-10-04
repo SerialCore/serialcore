@@ -136,36 +136,28 @@ int sonn_add_edge(sonn_t *s, int a, int b)
 
     int md = s->pool->max_degree;
 
-    /* If the edge already exists (in a's row), refresh both halves' age and bail.
-     * Symmetric storage means b's matching entry exists too. */
+    /* Already linked. Symmetric storage keeps the matching half. Age is not ours. */
     int slot_a = nnpool_find_edge_slot(s->pool, a, b);
     if (slot_a >= 0) {
-        int eidx_a = a * md + slot_a;
-        s->pool->edges[eidx_a].age = 0;
-        int slot_b = nnpool_find_edge_slot(s->pool, b, a);
-        if (slot_b >= 0) {
-            int eidx_b = b * md + slot_b;
-            s->pool->edges[eidx_b].age = 0;
-        }
-        return eidx_a;
+        return a * md + slot_a;
     }
 
     /* Need room in both rows; refuse if either endpoint is already full. */
     if (s->pool->degrees[a] >= md) return -1;
     if (s->pool->degrees[b] >= md) return -1;
 
-    /* Search for the free slot in edge. */
+    /* First free slot in each row. */
     edge_t *row_a = nnpool_edge_row(s->pool, a);
     int slot_a_free = -1;
-    for (int s = 0; s < md; s++) {
-        if (!row_a[s].active) slot_a_free = s;
+    for (int k = 0; k < md; k++) {
+        if (!row_a[k].active) { slot_a_free = k; break; }
     }
     if (slot_a_free < 0) return -1;
 
     edge_t *row_b = nnpool_edge_row(s->pool, b);
     int slot_b_free = -1;
-    for (int s = 0; s < md; s++) {
-        if (!row_b[s].active) slot_b_free = s;
+    for (int k = 0; k < md; k++) {
+        if (!row_b[k].active) { slot_b_free = k; break; }
     }
     if (slot_b_free < 0) return -1;
 
@@ -176,14 +168,12 @@ int sonn_add_edge(sonn_t *s, int a, int b)
     edge_t *ea = &s->pool->edges[eidx_a];
     ea->from = a;
     ea->to = b;
-    ea->age = 0;
     ea->active = 1;
     s->pool->degrees[a]++;
 
     edge_t *eb = &s->pool->edges[eidx_b];
     eb->from = b;
     eb->to = a;
-    eb->age = 0;
     eb->active = 1;
     s->pool->degrees[b]++;
 
@@ -252,14 +242,23 @@ int sonn_get_output_range(const sonn_t *s, int *start, int *count)
     return 0;
 }
 
-int sonn_get_output(const sonn_t *s, float *out)
+int sonn_foreach_neighbor(const sonn_t *s, int id, sonn_neighbor_cb cb, void *userdata)
 {
-    if (!s || !s->pool || !out) return -1;
-    for (int i = 0; i < s->out_count; i++) {
-        neuron_t *n = nnpool_get_neuron(s->pool, s->out_start + i);
-        out[i] = n ? n->activation : 0.0f;
+    if (!s || !s->pool || !cb || id < 0) return 0;
+    neuron_t *n = nnpool_get_neuron(s->pool, id);
+    if (!n || !n->active) return 0;
+
+    edge_t *erow = nnpool_edge_row(s->pool, id);
+    if (!erow) return 0;
+
+    int seen = 0;
+    int md = s->pool->max_degree;
+    for (int i = 0; i < md; i++) {
+        if (!erow[i].active) continue;
+        seen++;
+        if (cb(erow[i].to, userdata)) return seen;
     }
-    return 0;
+    return seen;
 }
 
 /* Claim/activate a neuron slot described by meta JSON (id + type only). */
@@ -304,20 +303,18 @@ static int sonn_claim_neuron(sonn_t *s, const cJSON *jn, int expect_existing)
     return 0;
 }
 
-int sonn_save(const sonn_t *s, const char *json_path, const char *bin_path)
+cJSON *sonn_to_json(const sonn_t *s)
 {
     cJSON *root;
     cJSON *neurons;
     cJSON *edges;
     activaton_t default_type = GELU;
     int md;
-    int nparams;
-    int rc;
 
-    if (!s || !s->pool || !s->pool->params || !json_path || !bin_path) return -1;
+    if (!s || !s->pool || !s->pool->params) return NULL;
 
     root = cJSON_CreateObject();
-    if (!root) return -1;
+    if (!root) return NULL;
 
     {
         neuron_t *n0 = nnpool_get_neuron(s->pool, s->in_start);
@@ -342,7 +339,7 @@ int sonn_save(const sonn_t *s, const char *json_path, const char *bin_path)
         cJSON_Delete(neurons);
         cJSON_Delete(edges);
         cJSON_Delete(root);
-        return -1;
+        return NULL;
     }
     cJSON_AddItemToObject(root, "neurons", neurons);
     cJSON_AddItemToObject(root, "edges", edges);
@@ -358,7 +355,7 @@ int sonn_save(const sonn_t *s, const char *json_path, const char *bin_path)
         jn = cJSON_CreateObject();
         if (!jn) {
             cJSON_Delete(root);
-            return -1;
+            return NULL;
         }
         cJSON_AddNumberToObject(jn, "id", id);
         cJSON_AddStringToObject(jn, "type", activaton_name(n->type));
@@ -373,26 +370,19 @@ int sonn_save(const sonn_t *s, const char *json_path, const char *bin_path)
             je = cJSON_CreateObject();
             if (!je) {
                 cJSON_Delete(root);
-                return -1;
+                return NULL;
             }
             cJSON_AddNumberToObject(je, "from", id);
             cJSON_AddNumberToObject(je, "to", row[j].to);
-            cJSON_AddNumberToObject(je, "age", row[j].age);
             cJSON_AddItemToArray(edges, je);
         }
     }
 
-    rc = iojson_write_cjson(json_path, root);
-    cJSON_Delete(root);
-    if (rc != 0) return -1;
-
-    nparams = s->pool->max_neurons * (s->pool->input_dim + 1);
-    return iobin_write_floats(bin_path, s->pool->params, nparams);
+    return root;
 }
 
-sonn_t *sonn_load(const char *json_path, const char *bin_path)
+sonn_t *sonn_from_json(const cJSON *root)
 {
-    cJSON *root;
     const char *act_s = NULL;
     int input_dim = 0, output_dim = 0, max_neurons = 0, max_degree = 0;
     int in_start = 0, in_count = 0, out_start = 0, out_count = 0;
@@ -402,21 +392,13 @@ sonn_t *sonn_load(const char *json_path, const char *bin_path)
     sonn_t *s = NULL;
     int ok = 1;
     int n_neurons;
-    int nparams;
 
-    if (!json_path || !bin_path) return NULL;
-
-    root = iojson_parse_file(json_path);
-    if (!root || !cJSON_IsObject(root)) {
-        cJSON_Delete(root);
-        return NULL;
-    }
+    if (!root || !cJSON_IsObject(root)) return NULL;
 
     if (iojson_get_int(root, "input_dim", &input_dim) != 0 ||
         iojson_get_int(root, "output_dim", &output_dim) != 0 ||
         iojson_get_int(root, "max_neurons", &max_neurons) != 0 ||
         iojson_get_int(root, "max_degree", &max_degree) != 0) {
-        cJSON_Delete(root);
         return NULL;
     }
 
@@ -431,16 +413,10 @@ sonn_t *sonn_load(const char *json_path, const char *bin_path)
 
     neurons = iojson_get_array(root, "neurons");
     edges = iojson_get_array(root, "edges");
-    if (!neurons) {
-        cJSON_Delete(root);
-        return NULL;
-    }
+    if (!neurons) return NULL;
 
     s = sonn_create(input_dim, output_dim, max_neurons, max_degree, default_type);
-    if (!s) {
-        cJSON_Delete(root);
-        return NULL;
-    }
+    if (!s) return NULL;
 
     if (in_count > 0 && (s->in_start != in_start || s->in_count != in_count)) ok = 0;
     if (ok && out_count > 0 && (s->out_start != out_start || s->out_count != out_count)) ok = 0;
@@ -467,9 +443,6 @@ sonn_t *sonn_load(const char *json_path, const char *bin_path)
         for (int i = 0; ok && i < n_edges; i++) {
             cJSON *je = cJSON_GetArrayItem(edges, i);
             int from = 0, to = 0;
-            float age = 0.0f;
-            int eidx;
-            int sa, sb;
 
             if (!cJSON_IsObject(je) ||
                 iojson_get_int(je, "from", &from) != 0 ||
@@ -477,44 +450,74 @@ sonn_t *sonn_load(const char *json_path, const char *bin_path)
                 ok = 0;
                 break;
             }
-            iojson_get_float(je, "age", &age);
 
-            eidx = sonn_add_edge(s, from, to);
-            if (eidx < 0) {
+            /* Older files may still carry "age"; the graph ignores it. */
+            if (sonn_add_edge(s, from, to) < 0) {
                 ok = 0;
                 break;
             }
-
-            sa = nnpool_find_edge_slot(s->pool, from, to);
-            sb = nnpool_find_edge_slot(s->pool, to, from);
-            if (sa >= 0) nnpool_edge_row(s->pool, from)[sa].age = age;
-            if (sb >= 0) nnpool_edge_row(s->pool, to)[sb].age = age;
         }
     }
 
-    if (ok) {
-        nparams = s->pool->max_neurons * (s->pool->input_dim + 1);
-        if (iobin_read_floats(bin_path, s->pool->params, nparams) != 0) ok = 0;
-    }
-
-    /* n->bias is a cached copy of params[0]; refresh active neurons. */
-    for (int id = 0; ok && id < s->pool->max_neurons; id++) {
-        neuron_t *neu = nnpool_get_neuron(s->pool, id);
-        float *params;
-        if (!neu || !neu->active) continue;
-        params = nnpool_get_params(s->pool, id);
-        if (!params) {
-            ok = 0;
-            break;
-        }
-        neu->bias = params[0];
-        neu->weights = params + 1;
-    }
-
-    cJSON_Delete(root);
     if (!ok) {
         sonn_destroy(s);
         return NULL;
     }
     return s;
+}
+
+int sonn_save(const sonn_t *s, const char *json_path, const char *bin_path)
+{
+    cJSON *root;
+    int nparams;
+    int rc;
+
+    if (!s || !s->pool || !s->pool->params || !json_path || !bin_path) return -1;
+
+    root = sonn_to_json(s);
+    if (!root) return -1;
+    rc = iojson_write_cjson(json_path, root);
+    cJSON_Delete(root);
+    if (rc != 0) return -1;
+
+    nparams = s->pool->max_neurons * (s->pool->input_dim + 1);
+    return iobin_write_floats(bin_path, s->pool->params, nparams);
+}
+
+sonn_t *sonn_load(const char *json_path, const char *bin_path)
+{
+    cJSON *root;
+    sonn_t *s;
+    int nparams;
+
+    if (!json_path || !bin_path) return NULL;
+
+    root = iojson_parse_file(json_path);
+    if (!root) return NULL;
+
+    s = sonn_from_json(root);
+    cJSON_Delete(root);
+    if (!s) return NULL;
+
+    nparams = s->pool->max_neurons * (s->pool->input_dim + 1);
+    if (iobin_read_floats(bin_path, s->pool->params, nparams) != 0) {
+        sonn_destroy(s);
+        return NULL;
+    }
+    sonn_rebind_params(s);
+    return s;
+}
+
+void sonn_rebind_params(sonn_t *s)
+{
+    if (!s || !s->pool) return;
+    for (int id = 0; id < s->pool->max_neurons; id++) {
+        neuron_t *n = nnpool_get_neuron(s->pool, id);
+        float *params;
+        if (!n || !n->active) continue;
+        params = nnpool_get_params(s->pool, id);
+        if (!params) continue;
+        n->bias = params[0];
+        n->weights = params + 1;
+    }
 }

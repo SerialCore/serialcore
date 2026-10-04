@@ -14,7 +14,7 @@
 typedef struct nnpool {
     neuron_t *neurons;              /* [max_neurons] */
     float    *params;               /* [max_neurons * (input_dim + 1)] — bias at [0], weights [1..] for each neuron */
-    edge_t   *edges;                /* [max_neurons * max_degree] — edge attributes + connectivity (use .to when .active) */
+    edge_t   *edges;                /* [max_neurons * max_degree] — undirected adjacency (use .to when .active) */
     int      *degrees;              /* current "degree" = number of neighbors this neuron currently has (0..max_degree) */
 
     int      max_neurons;           /* total capacity */

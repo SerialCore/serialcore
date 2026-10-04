@@ -9,80 +9,85 @@
 
 #include <serialcore/sonn/sonn.h>
 
-/* GNG — Growing Neural Gas (Fritzke, 1995) algorithm layer built on top of the generic SONN. */
+/* GNG — Growing Neural Gas (Fritzke, 1995) on the generic SONN graph.
+ * Error, edge age, and per-unit readout live in this object, not on neuron_t. */
 
 /* Default GNG policy knobs. */
 #define GNG_DEFAULT_INSERT_INTERVAL 50
 #define GNG_DEFAULT_MAX_AGE         50.0f
 #define GNG_DEFAULT_ERROR_DECAY     0.99f
 
+/* Squared distance is the default. prototype and x each have `dim` floats. */
+typedef float (*gng_distance_fn)(const float *prototype, const float *x, int dim, void *userdata);
+
 typedef struct gng {
-    sonn_t *net;              /* underlying generic SO network (owned by caller) */
-    int     insert_interval;  /* insert a new interior neuron every N obs (0 = off) */
+    sonn_t *net;              /* borrowed; caller always owns it, including after gng_load */
+    int     insert_interval;  /* insert every N observations; 0 disables insertion */
     float   max_age;          /* edge age beyond which it is pruned */
-    float   error_decay;      /* per-step error decay factor */
-    int     observe_count;    /* observations since the last insertion */
+    float   error_decay;      /* per-step multiplier applied to every unit error */
+    int     observe_count;
+
+    float  *error;            /* [max_neurons], indexed by neuron id */
+    float  *edge_age;         /* [max_neurons * max_degree], same slot order as pool edges */
+    float  *readout;          /* [max_neurons * output_dim], local supervised label */
+
+    gng_distance_fn distance;
+    void           *distance_userdata;
 } gng_t;
 
-/* Lifecycle. The gng borrows the sonn pointer; caller still owns it. */
+/* Lifecycle. g borrows net. gng_destroy does not free it. */
 gng_t *gng_create(sonn_t *net, int insert_interval, float max_age, float error_decay);
 void gng_destroy(gng_t *g);
 
-/* Update the policy knobs at runtime. Passing 0/0/0 restores the defaults. */
+/* `insert_interval` < 0 restores the default; 0 turns insertion off.
+ * `max_age` or `error_decay` <= 0 restores that knob's default. */
 void gng_configure(gng_t *g, int insert_interval, float max_age, float error_decay);
 
-/* Compute squared Euclidean distance between input and neuron's prototype. */
-float gng_prototype_distance(sonn_t *s, int neuron_id, const float *input);
+/* NULL fn restores squared Euclidean distance. */
+void gng_set_distance(gng_t *g, gng_distance_fn fn, void *userdata);
 
-/* Find the Best Matching Unit (interior neuron closest to input). Returns the
- * neuron id, or -1 if no interior neurons exist. */
-int gng_find_bmu(sonn_t *s, const float *input);
+/* Squared distance (or the hooked metric) between input and a unit prototype. */
+float gng_prototype_distance(gng_t *g, int neuron_id, const float *input);
 
-/* Find BMU and second BMU (useful for GNG insertion). Writes second BMU to
- * *second_bmu if provided. Returns BMU id, or -1 if no interior neurons
- * exist. */
-int gng_find_bmu2(sonn_t *s, const float *input, int *second_bmu);
+/* Best matching interior unit, or -1 if none exist.
+ * gng_find_bmu2 also writes the second-best id (*second_bmu = -1 if absent). */
+int gng_find_bmu(gng_t *g, const float *input);
+int gng_find_bmu2(gng_t *g, const float *input, int *second_bmu);
 
-/* Move neuron's prototype (weights) toward the input vector. */
+/* Move a prototype toward `input`. Geometry only; no GNG state. */
 void gng_adapt_prototype(sonn_t *s, int neuron_id, const float *input, float epsilon);
 
-/* Adapt the BMU toward input with epsilon_bmu, and all its direct topological
- * neighbors with epsilon_n. This is the classic "BMU + neighborhood" update
- * step in many SO algorithms. */
+/* Adapt the BMU by epsilon_bmu and its interior neighbors by epsilon_n. */
 void gng_adapt_bmu_and_neighbors(sonn_t *s, int bmu, const float *input, float epsilon_bmu, float epsilon_n);
 
-/* Add error to a neuron (for GNG error accumulation). */
-void gng_accumulate_error(sonn_t *s, int neuron_id, float err);
+void gng_accumulate_error(gng_t *g, int neuron_id, float err);
+float gng_get_error(gng_t *g, int neuron_id);
+int gng_find_highest_error(gng_t *g);
+void gng_decay_errors(gng_t *g, float factor);
 
-/* Query the accumulated error of a neuron. */
-float gng_get_error(sonn_t *s, int neuron_id);
+/* neuron_id >= 0 ages that unit's edges (both stored directions, one logical step).
+ * neuron_id < 0 ages every undirected edge once. */
+void gng_age_edges(gng_t *g, int neuron_id);
+void gng_reset_edge_age(gng_t *g, int from, int to);
+float gng_get_edge_age(gng_t *g, int from, int to);
 
-/* Find the active interior neuron with the highest accumulated error. */
-int gng_find_highest_error(sonn_t *s);
+/* Drop edges whose age exceeds max_age. Returns how many undirected edges were removed. */
+int gng_remove_old_edges(gng_t *g, float max_age);
 
-/* Multiply every neuron's accumulated error by factor (typically < 1.0).
- * Call periodically to prevent unbounded error growth. */
-void gng_decay_errors(sonn_t *s, float factor);
+/* Insert a unit halfway between a and b. Rolls back if either new edge cannot be added.
+ * Returns the new id, or -1. */
+int gng_insert_between(gng_t *g, int a, int b, activaton_t type);
 
-/* Increment age on all edges of a neuron (or globally if id == -1). */
-void gng_age_edges(sonn_t *s, int neuron_id);
-
-/* Reset the age of the edge from -> to to 0. */
-void gng_reset_edge_age(sonn_t *s, int from, int to);
-
-/* Get the current age of the edge from -> to (returns -1 if no edge). */
-float gng_get_edge_age(sonn_t *s, int from, int to);
-
-/* Remove edges whose age exceeds max_age. Returns number of edges removed. */
-int gng_remove_old_edges(sonn_t *s, float max_age);
-
-/* Insert a new interior neuron with prototype = average of a and b.
- * Removes the direct edge between a and b (if any).
- * Connects the new neuron topologically to both a and b.
- * Returns the id of the new neuron, or -1 on failure. */
-int gng_insert_between(sonn_t *s, int a, int b, activaton_t type);
-
-/* Present one sample to the network and let it grow / adapt */
+/* One Fritzke step. `y` may be NULL. When `y` is set, the BMU's readout moves toward it.
+ * The first two observations seed two connected interior units. */
 int gng_observe(gng_t *g, const float *x, const float *y, float eps_bmu, float eps_n, float eps_out);
+
+/* Copy the BMU readout into `out` (output_dim floats). Returns -1 if no interior unit exists. */
+int gng_predict(gng_t *g, const float *x, float *out);
+
+/* Graph plus GNG state. gng_load allocates the sonn and writes it to *net_out.
+ * Caller owns both: sonn_destroy(*net_out) and gng_destroy(g). gng borrows the sonn. */
+int gng_save(const gng_t *g, const char *json_path, const char *bin_path);
+gng_t *gng_load(const char *json_path, const char *bin_path, sonn_t **net_out);
 
 #endif

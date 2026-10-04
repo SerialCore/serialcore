@@ -29,7 +29,9 @@ extern const char *layer_type_str[];
 
 /* SONN algorithm types. */
 typedef enum sonn_type {
-    GNG
+    GNG,
+    SOM,
+    NGAS
 } sonn_type_t;
 
 extern const char *sonn_type_str[];

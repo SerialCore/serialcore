@@ -7,6 +7,7 @@
 #ifndef SERIALCORE_SONN_SONN
 #define SERIALCORE_SONN_SONN
 
+#include <serialcore/cJSON.h>
 #include <serialcore/sonn/activaton.h>
 #include <serialcore/sonn/nnpool.h>
 
@@ -42,18 +43,27 @@ void sonn_remove_edge(sonn_t *s, int a, int b);
 /* Interior neurons are the ones algorithm layers grow and adapt. */
 int sonn_is_interior(const sonn_t *s, int id);
 
-/* Queries */
+/* Queries. get_neighbors stops after max_out entries.
+ * foreach_neighbor visits every live neighbor; cb != 0 stops the walk.
+ * Both return how many neighbors were visited. */
 int sonn_get_neighbors(const sonn_t *s, int id, int *out, int max_out);
+typedef int (*sonn_neighbor_cb)(int neighbor, void *userdata);
+int sonn_foreach_neighbor(const sonn_t *s, int id, sonn_neighbor_cb cb, void *userdata);
 
 /* Range accessors for the fixed input/output neuron anchors. */
 int sonn_get_input_range(const sonn_t *s, int *start, int *count);
 int sonn_get_output_range(const sonn_t *s, int *start, int *count);
 
-/* Read out the current activations of the output neurons into `out`. */
-int sonn_get_output(const sonn_t *s, float *out);
+/* Graph JSON, without the parameter binary. Caller cJSON_Delete's the result. */
+cJSON *sonn_to_json(const sonn_t *s);
+sonn_t *sonn_from_json(const cJSON *root);
 
-/* Persist meta JSON (dims, active neurons, edges) + nnpool params binary. */
+/* Persist meta JSON (dims, active neurons, edges) + nnpool params binary.
+ * Edge age and other algorithm state are not part of this file. */
 int sonn_save(const sonn_t *s, const char *json_path, const char *bin_path);
 sonn_t *sonn_load(const char *json_path, const char *bin_path);
+
+/* Refresh neuron.bias and neuron.weights after the parameter block is overwritten. */
+void sonn_rebind_params(sonn_t *s);
 
 #endif

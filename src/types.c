@@ -21,5 +21,7 @@ const char *layer_type_str[] = {
 };
 
 const char *sonn_type_str[] = {
-    "GNG"
+    "GNG",
+    "SOM",
+    "NGAS"
 };
